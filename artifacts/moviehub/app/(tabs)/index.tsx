@@ -12,7 +12,7 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueries } from '@tanstack/react-query';
-import { FadeInDown } from 'react-native-reanimated';
+import { FadeInDown, Keyframe } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
@@ -20,6 +20,18 @@ import { GENRES, MOVIE_CATEGORIES } from '@/lib/catalog';
 import { getMovies, Movie } from '@/lib/providers';
 import { Problem, Rail, RailSkeleton } from '@/lib/ui';
 import { useEffect, useRef, useState } from 'react';
+
+const FeaturedCardEnter = new Keyframe({
+  0: { opacity: 0, transform: [{ translateY: 38 }, { rotateZ: '-9deg' }, { scale: 0.93 }] },
+  54: { opacity: 1, transform: [{ translateY: -7 }, { rotateZ: '2deg' }, { scale: 1.015 }] },
+  78: { opacity: 1, transform: [{ translateY: 3 }, { rotateZ: '-0.7deg' }, { scale: 0.995 }] },
+  100: { opacity: 1, transform: [{ translateY: 0 }, { rotateZ: '0deg' }, { scale: 1 }] },
+}).duration(760);
+
+const FeaturedCardFall = new Keyframe({
+  0: { opacity: 1, transform: [{ translateY: 0 }, { rotateZ: '0deg' }, { scale: 1 }] },
+  100: { opacity: 0, transform: [{ translateY: 420 }, { translateX: 52 }, { rotateZ: '16deg' }, { scale: 0.82 }] },
+}).duration(620);
 
 export default function Home() {
   const colors = useColors();
@@ -227,7 +239,8 @@ export default function Home() {
 
             <Animated.View
               key={String(hero.subjectId)}
-              entering={FadeInDown.duration(500)}
+              entering={FeaturedCardEnter}
+              exiting={FeaturedCardFall}
               style={{
                 position: 'absolute',
                 left: '16%',
