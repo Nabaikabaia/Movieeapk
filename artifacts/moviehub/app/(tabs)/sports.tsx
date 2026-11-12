@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -105,7 +106,7 @@ export default function Sports() {
 
               <View style={{ flexDirection: 'row', alignItems: 'center', padding: 14, gap: 8 }}>
                 <View style={{ flex: 1, alignItems: 'center', gap: 7 }}>
-                  {match.team1?.avatar ? <Image source={{ uri: match.team1.avatar }} style={{ width: 42, height: 42, resizeMode: 'contain' }} /> : null}
+                  {match.team1?.avatar ? <Image source={{ uri: match.team1.avatar }} contentFit="contain" cachePolicy="disk" transition={180} style={{ width: 42, height: 42 }} /> : null}
                   <Text numberOfLines={2} style={{ minHeight: 34, color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12, textAlign: 'center' }}>
                     {match.team1?.name || 'Home'}
                   </Text>
@@ -118,7 +119,7 @@ export default function Sports() {
                   </Text>
                 </View>
                 <View style={{ flex: 1, alignItems: 'center', gap: 7 }}>
-                  {match.team2?.avatar ? <Image source={{ uri: match.team2.avatar }} style={{ width: 42, height: 42, resizeMode: 'contain' }} /> : null}
+                  {match.team2?.avatar ? <Image source={{ uri: match.team2.avatar }} contentFit="contain" cachePolicy="disk" transition={180} style={{ width: 42, height: 42 }} /> : null}
                   <Text numberOfLines={2} style={{ minHeight: 34, color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12, textAlign: 'center' }}>
                     {match.team2?.name || 'Away'}
                   </Text>

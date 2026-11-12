@@ -1,13 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Image,
-  ImageBackground,
   Pressable,
   ScrollView,
   Text,
   View,
 } from 'react-native';
+import { Image, ImageBackground } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,7 +18,7 @@ import { useColors } from '@/hooks/useColors';
 import { getDetails, getRecommendations, getStreams, Movie, Stream } from '@/lib/providers';
 import { useFavorites } from '@/lib/Favorites';
 import { useDownloads } from '@/lib/Downloads';
-import { Empty, Problem, Rail } from '@/lib/ui';
+import { Empty, InlineLoader, Loading, Problem, Rail } from '@/lib/ui';
 
 export default function MovieDetails() {
   const colors = useColors();
@@ -116,9 +114,9 @@ export default function MovieDetails() {
   const image = subject?.cover?.url || subject?.coverUrl || subject?.still?.url || '';
 
   if (detailsQuery.isLoading) {
-    return <View style={{ flex: 1, backgroundColor: colors.background, justifyContent: 'center' }}><ActivityIndicator size="large" color={colors.primary} /></View>;
+    return <View style={{ flex: 1, backgroundColor: colors.background }}><Loading label="Loading title details…"/></View>;
   }
-  if (detailsQuery.isError || !subject) {
+  if (!subject) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
         <Pressable onPress={() => router.back()} accessibilityLabel="Go back" style={{ padding: 18 }}>
@@ -138,7 +136,7 @@ export default function MovieDetails() {
       showsVerticalScrollIndicator={false}
     >
       <View style={{ height: 550, backgroundColor: colors.card }}>
-        <ImageBackground source={{ uri: image }} resizeMode="cover" style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <ImageBackground source={{ uri: image }} contentFit="cover" cachePolicy="disk" transition={260} style={{ flex: 1, justifyContent: 'flex-end' }}>
           {trailerUrl ? (
             <VideoView
               player={trailerPlayer}
@@ -287,11 +285,9 @@ export default function MovieDetails() {
               Movie API · one stream provider
             </Text>
           </View>
-          {sourceQuery.isFetching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+          {sourceQuery.isFetching ? <InlineLoader label="Finding available streams…"/> : null}
         </View>
-        {sourceQuery.isError ? (
-          <Problem message={sourceQuery.error.message} retry={() => void sourceQuery.refetch()} />
-        ) : sourceQuery.data?.length ? (
+        {sourceQuery.data?.length ? (
           sourceQuery.data.map((stream) => (
             <View
               key={stream.id}
@@ -312,6 +308,8 @@ export default function MovieDetails() {
               </Pressable>
             </View>
           ))
+        ) : sourceQuery.isError ? (
+          <Problem message={sourceQuery.error.message} retry={() => void sourceQuery.refetch()} />
         ) : !sourceQuery.isFetching ? (
           <Empty icon="videocam-off-outline" title="No stream available" subtitle="The Movie API has no source for this title right now. Try again later." />
         ) : null}
@@ -327,7 +325,7 @@ export default function MovieDetails() {
             {actors.map((person: any, index: number) => (
               <Animated.View key={`${person.staffId}-${index}`} entering={FadeInDown.delay(index * 35).duration(360)} style={{ width: 78, alignItems: 'center' }}>
                 {person.avatarUrl ? (
-                  <Image source={{ uri: person.avatarUrl }} style={{ width: 66, height: 66, borderRadius: 34, backgroundColor: colors.card }} />
+                  <Image source={{ uri: person.avatarUrl }} contentFit="cover" cachePolicy="disk" transition={180} style={{ width: 66, height: 66, borderRadius: 34, backgroundColor: colors.card }} />
                 ) : (
                   <View style={{ width: 66, height: 66, borderRadius: 34, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}>
                     <Ionicons name="person-outline" size={24} color={colors.mutedForeground} />
@@ -352,7 +350,7 @@ export default function MovieDetails() {
             {crew.slice(0, 6).map((person: any, index: number) => (
               <Animated.View key={`${person.staffId}-${index}`} entering={FadeInDown.delay(index * 35).duration(360)} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 15, backgroundColor: colors.card, padding: 12 }}>
                 {person.avatarUrl ? (
-                  <Image source={{ uri: person.avatarUrl }} style={{ width: 45, height: 45, borderRadius: 24 }} />
+                  <Image source={{ uri: person.avatarUrl }} contentFit="cover" cachePolicy="disk" transition={180} style={{ width: 45, height: 45, borderRadius: 24 }} />
                 ) : (
                   <View style={{ width: 45, height: 45, borderRadius: 24, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}>
                     <Ionicons name="person-outline" size={18} color={colors.mutedForeground} />

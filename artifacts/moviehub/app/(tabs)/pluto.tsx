@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -73,7 +74,7 @@ export default function PlutoTV() {
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}
               >
                 {logo ? (
-                  <Image source={{ uri: logo }} resizeMode="contain" style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: colors.background }} />
+                    <Image source={{ uri: logo }} contentFit="contain" cachePolicy="disk" transition={180} style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: colors.background }} />
                 ) : (
                   <View style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}>
                     <Ionicons name="tv-outline" size={20} color={colors.primary} />

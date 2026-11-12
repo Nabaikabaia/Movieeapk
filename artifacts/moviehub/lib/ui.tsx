@@ -1,7 +1,8 @@
 import React from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
 import type { Movie } from './providers';
 
@@ -9,7 +10,7 @@ export function Poster({ movie, width = 140, onPress }: { movie: Movie; width?: 
   const c=useColors();const image=movie.cover?.url||movie.coverUrl||movie.poster;
   return <Animated.View entering={FadeInDown.duration(320)}><Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Open ${movie.title}`} testID={`poster-${movie.subjectId}`} style={({pressed})=>({width,marginRight:13,opacity:pressed?.84:1,transform:[{scale:pressed?.97:1}]})}>
     <View style={{width,height:width*1.43,borderRadius:14,backgroundColor:c.card,overflow:'hidden'}}>
-      {image?<Image source={{uri:image}} resizeMode="cover" style={{width:'100%',height:'100%'}}/>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}><Ionicons name="film-outline" size={29} color={c.mutedForeground}/></View>}
+      {image?<Image source={{uri:image}} contentFit="cover" cachePolicy="disk" transition={220} style={{width:'100%',height:'100%'}}/>:<View style={{flex:1,alignItems:'center',justifyContent:'center'}}><Ionicons name="film-outline" size={29} color={c.mutedForeground}/></View>}
       {!!(movie.imdbRatingValue||movie.rating)&&<View style={{position:'absolute',top:8,left:8,backgroundColor:'rgba(12,13,15,.86)',borderRadius:10,paddingHorizontal:8,paddingVertical:5}}><Text style={{color:c.accent,fontSize:11,fontFamily:'Inter_600SemiBold'}}>★ {movie.imdbRatingValue||movie.rating}</Text></View>}
     </View>
     <Text numberOfLines={2} style={{color:c.foreground,fontSize:13,fontFamily:'Inter_600SemiBold',marginTop:8,lineHeight:18}}>{movie.title}</Text>
@@ -29,7 +30,63 @@ export function Rail({title,items,onMovie,action}:{title:string;items:Movie[];on
 }
 
 export function Loading({label='Connecting to your movie providers…'}:{label?:string}){
-  const c=useColors();return <View style={{flex:1,alignItems:'center',justifyContent:'center',padding:28}}><ActivityIndicator color={c.primary} size="large"/><Text style={{color:c.mutedForeground,marginTop:14,textAlign:'center'}}>{label}</Text></View>;
+  const c=useColors();
+  return <View style={{flex:1,justifyContent:'center',paddingHorizontal:25,paddingTop:30,paddingBottom:38}}>
+    <View style={{flexDirection:'row',alignItems:'center',gap:12,marginBottom:18}}>
+      <View style={{width:42,height:42,borderRadius:15,backgroundColor:'rgba(228,17,17,.14)',alignItems:'center',justifyContent:'center'}}>
+        <Ionicons name="play" color={c.primary} size={19}/>
+      </View>
+      <View style={{flex:1}}>
+        <Text style={{color:c.foreground,fontFamily:'Outfit_700Bold',fontSize:16}}>Setting the scene</Text>
+        <Text style={{color:c.mutedForeground,fontSize:12,marginTop:3}}>{label}</Text>
+      </View>
+    </View>
+    <View style={{height:3,backgroundColor:c.secondary,borderRadius:3,overflow:'hidden'}}>
+      <Animated.View entering={FadeInDown.duration(420)} style={{height:3,width:'42%',backgroundColor:c.primary,borderRadius:3}}/>
+    </View>
+    <View style={{flexDirection:'row',gap:10,marginTop:20}}>
+      {[0,1,2].map((item)=><SkeletonPoster key={item}/>)}
+    </View>
+  </View>;
+}
+
+export function InlineLoader({label}:{label:string}){
+  const c=useColors();
+  const opacity=useSharedValue(.4);
+  React.useEffect(()=>{opacity.value=withRepeat(withTiming(1,{duration:760}),-1,true);},[opacity]);
+  const motion=useAnimatedStyle(()=>({opacity:opacity.value,transform:[{scale:.9+opacity.value*.1}]}));
+  return <View style={{flexDirection:'row',alignItems:'center',gap:9,paddingVertical:13}}>
+    <Animated.View style={[motion,{width:19,height:19,borderRadius:10,backgroundColor:'rgba(228,17,17,.15)',alignItems:'center',justifyContent:'center'}]}>
+      <Ionicons name="play" size={9} color={c.primary}/>
+    </Animated.View>
+    <Text style={{color:c.mutedForeground,fontSize:12,fontFamily:'Outfit_500Medium'}}>{label}</Text>
+  </View>;
+}
+
+function SkeletonPulse({style}:{style:any}){
+  const c=useColors();
+  const opacity=useSharedValue(.48);
+  React.useEffect(()=>{opacity.value=withRepeat(withTiming(.9,{duration:850}),-1,true);},[opacity]);
+  const motion=useAnimatedStyle(()=>({opacity:opacity.value}));
+  return <Animated.View style={[{backgroundColor:c.secondary,borderRadius:9},style,motion]}/>;
+}
+
+function SkeletonPoster(){
+  return <View style={{width:94}}>
+    <SkeletonPulse style={{width:94,height:134,borderRadius:13}}/>
+    <SkeletonPulse style={{height:9,width:74,marginTop:9}}/>
+    <SkeletonPulse style={{height:7,width:48,marginTop:7}}/>
+  </View>;
+}
+
+export function RailSkeleton({title}:{title:string}){
+  const c=useColors();
+  return <View style={{marginTop:26}}>
+    <Text style={{fontSize:19,color:c.foreground,fontFamily:'Outfit_700Bold',paddingHorizontal:20,marginBottom:14}}>{title}</Text>
+    <ScrollView horizontal scrollEnabled={false} showsHorizontalScrollIndicator={false} contentContainerStyle={{paddingHorizontal:20}}>
+      {[0,1,2,3].map((item)=><SkeletonPoster key={item}/>)}
+    </ScrollView>
+  </View>;
 }
 export function Problem({message,retry}:{message:string;retry:()=>void}){
   const c=useColors();return <View style={{alignItems:'center',padding:32,marginTop:50}}><Ionicons name="cloud-offline-outline" size={34} color={c.mutedForeground}/><Text style={{color:c.foreground,fontSize:16,fontFamily:'Inter_600SemiBold',marginTop:12}}>Couldn’t load this right now</Text><Text style={{color:c.mutedForeground,textAlign:'center',marginTop:8,lineHeight:20}}>{message}</Text><Pressable onPress={retry} style={{marginTop:18,backgroundColor:c.primary,borderRadius:20,paddingVertical:11,paddingHorizontal:21}}><Text style={{color:'white',fontFamily:'Inter_600SemiBold'}}>Try again</Text></Pressable></View>;

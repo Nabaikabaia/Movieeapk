@@ -166,6 +166,7 @@ export default function TabLayout() {
       tabBar={(props) => <FloatingGlassBar {...props} />}
       screenOptions={{
         headerShown: false,
+        lazy: true,
         tabBarStyle: { backgroundColor: colors.background, borderTopWidth: 0 },
         sceneStyle: { backgroundColor: colors.background },
       }}
