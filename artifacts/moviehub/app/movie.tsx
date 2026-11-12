@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -51,6 +52,7 @@ function buildPlaybackSeasons(input: any[]): PlaybackSeason[] {
         number: episodeNumber || episodeIndex + 1,
         title,
         summary: typeof source === 'object' ? String(source.description || source.summary || '') : '',
+        duration: typeof source === 'object' ? Number(source.duration) || undefined : undefined,
       };
     });
     return { number, label: String(item.name || item.title || `Season ${number}`), episodes };
@@ -70,6 +72,9 @@ export default function MovieDetails() {
   const [selectedStreamId, setSelectedStreamId] = useState('');
   const [selectedAudio, setSelectedAudio] = useState('auto');
   const [selectedSubtitle, setSelectedSubtitle] = useState('');
+  const [selectedDownloadEpisodes, setSelectedDownloadEpisodes] = useState<number[]>([]);
+  const [downloadProgress, setDownloadProgress] = useState<{ current: number; total: number } | null>(null);
+  const [downloadNotice, setDownloadNotice] = useState('');
   const [actionLoading, setActionLoading] = useState<'play' | 'download' | null>(null);
   const [actionError, setActionError] = useState('');
   const detailsQuery = useQuery({
@@ -128,7 +133,14 @@ export default function MovieDetails() {
     enabled: !!subject?.subjectId,
     staleTime: 300_000,
   });
-  const rawSeasons = details?.resource?.seasons || subject?.seasons || [];
+  const directEpisodes = details?.resource?.episodes || details?.episodes;
+  const rawSeasons = details?.resource?.seasons?.length
+    ? details.resource.seasons
+    : subject?.seasons?.length
+      ? subject.seasons
+      : Array.isArray(directEpisodes)
+        ? [{ se: details?.resource?.season || details?.season || 1, episodes: directEpisodes }]
+        : [];
   const playbackSeasons = useMemo(() => buildPlaybackSeasons(rawSeasons), [rawSeasons]);
   const activeSeason = playbackSeasons.find((item) => item.number === season);
   const streams = sourceQuery.data || [];
@@ -190,6 +202,31 @@ export default function MovieDetails() {
     }, [trailerPlayer, trailerUrl, isMuted]),
   );
 
+  const changeSeason = (nextSeason: number) => {
+    setSeason(nextSeason);
+    setEpisode(1);
+    setSelectedDownloadEpisodes([]);
+    setDownloadNotice('');
+    setActionError('');
+  };
+
+  const toggleDownloadEpisode = (episodeNumber: number) => {
+    setSelectedDownloadEpisodes((current) => current.includes(episodeNumber)
+      ? current.filter((number) => number !== episodeNumber)
+      : [...current, episodeNumber].sort((a, b) => a - b));
+    setDownloadNotice('');
+    setActionError('');
+  };
+
+  const toggleSelectAllEpisodes = () => {
+    const availableEpisodes = activeSeason?.episodes.map((item) => item.number) || [];
+    const allSelected = availableEpisodes.length > 0
+      && availableEpisodes.every((number) => selectedDownloadEpisodes.includes(number));
+    setSelectedDownloadEpisodes(allSelected ? [] : availableEpisodes);
+    setDownloadNotice('');
+    setActionError('');
+  };
+
   const refreshSelectedStream = async (requested?: Stream): Promise<Stream> => {
     const result = await sourceQuery.refetch();
     if (result.isError) {
@@ -248,17 +285,85 @@ export default function MovieDetails() {
     if (!subject || actionLoading) return;
     setActionLoading('download');
     setActionError('');
+    setDownloadNotice('');
     try {
       const stream = await refreshSelectedStream();
       const downloadUrl = stream.downloadUrl || stream.proxyUrl || stream.url;
       if (!downloadUrl) throw new Error('This source does not provide a downloadable file.');
       const suffix = isSeries ? ` S${season} E${episode}` : '';
       const languageSuffix = selectedDub ? ` · ${selectedDub.language}` : '';
-      await startDownload(`${title}${suffix}${languageSuffix} · ${stream.quality}p`, downloadUrl);
+      void startDownload(`${title}${suffix}${languageSuffix} · ${stream.quality}p`, downloadUrl);
+      setDownloadNotice(isSeries ? 'Current episode added to Downloads.' : 'Movie added to Downloads.');
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'The Movie API could not prepare this download.');
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const downloadEpisodes = async () => {
+    const episodeNumbers = [...new Set(selectedDownloadEpisodes)].sort((a, b) => a - b);
+    if (!subject || !playbackSubject || !episodeNumbers.length || actionLoading) return;
+    if (Platform.OS === 'web') {
+      setActionError('Episode downloads are available in the Android app.');
+      return;
+    }
+
+    setActionLoading('download');
+    setActionError('');
+    setDownloadNotice('');
+    setDownloadProgress({ current: 0, total: episodeNumbers.length });
+    const failedEpisodes: number[] = [];
+    const fallbackEpisodes: number[] = [];
+    let queued = 0;
+
+    try {
+      for (let offset = 0; offset < episodeNumbers.length; offset += 3) {
+        const batch = episodeNumbers.slice(offset, offset + 3);
+        const resolved = await Promise.all(batch.map(async (episodeNumber) => {
+          try {
+            const availableStreams = await getStreams(playbackSubject, sourceSeason, episodeNumber);
+            const stream = availableStreams.find((item) => item.quality === selectedStream?.quality)
+              || availableStreams[0];
+            return { episodeNumber, stream };
+          } catch {
+            return { episodeNumber, stream: undefined };
+          }
+        }));
+
+        for (const { episodeNumber, stream } of resolved) {
+          const downloadUrl = stream?.downloadUrl || stream?.proxyUrl || stream?.url;
+          if (!stream || !downloadUrl) {
+            failedEpisodes.push(episodeNumber);
+            continue;
+          }
+          if (selectedStream?.quality && stream.quality !== selectedStream.quality) {
+            fallbackEpisodes.push(episodeNumber);
+          }
+          const episodeTitle = activeSeason?.episodes.find((item) => item.number === episodeNumber)?.title
+            || `Episode ${String(episodeNumber).padStart(2, '0')}`;
+          const audioLabel = selectedDub ? ` · ${selectedDub.language}` : '';
+          const downloadTitle = `${title} S${season} E${episodeNumber} · ${episodeTitle}${audioLabel} · ${stream.quality}p`;
+          void startDownload(downloadTitle, downloadUrl);
+          queued += 1;
+        }
+        setDownloadProgress({ current: Math.min(offset + batch.length, episodeNumbers.length), total: episodeNumbers.length });
+      }
+
+      if (queued) {
+        const fallbackNotice = fallbackEpisodes.length
+          ? ` ${fallbackEpisodes.length} used another available resolution.`
+          : '';
+        setDownloadNotice(`${queued} episode download${queued === 1 ? '' : 's'} started. Track progress in Downloads.${fallbackNotice}`);
+      }
+      if (failedEpisodes.length) {
+        setActionError(`${failedEpisodes.length} selected episode${failedEpisodes.length === 1 ? '' : 's'} had no downloadable source.`);
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not prepare the selected episode downloads.');
+    } finally {
+      setActionLoading(null);
+      setDownloadProgress(null);
     }
   };
 
@@ -400,11 +505,11 @@ export default function MovieDetails() {
           seasons={playbackSeasons}
           selectedSeason={season}
           selectedEpisode={episode}
-          onSeasonChange={(value) => { setSeason(value); setEpisode(1); }}
+          onSeasonChange={changeSeason}
           onEpisodeChange={setEpisode}
           streams={streams}
           loading={sourceQuery.isFetching}
-          error={actionError || (sourceQuery.isError ? sourceQuery.error.message : undefined)}
+          error={sourceQuery.isError ? sourceQuery.error.message : undefined}
           onRetry={() => { setActionError(''); void sourceQuery.refetch(); }}
           actionLoading={actionLoading}
           selectedStreamId={selectedStreamId}
@@ -416,6 +521,13 @@ export default function MovieDetails() {
           subtitles={subtitles}
           subtitlesLoading={subtitleQuery.isFetching && !subtitles.length}
           onSubtitleChange={setSelectedSubtitle}
+          selectedDownloadEpisodes={selectedDownloadEpisodes}
+          onToggleDownloadEpisode={toggleDownloadEpisode}
+          onSelectAllEpisodes={toggleSelectAllEpisodes}
+          onDownloadEpisodes={() => { void downloadEpisodes(); }}
+          downloadProgress={downloadProgress}
+          downloadNotice={downloadNotice}
+          actionError={actionError}
           onPlay={playSelected}
           onDownload={() => { void downloadSelected(); }}
         />

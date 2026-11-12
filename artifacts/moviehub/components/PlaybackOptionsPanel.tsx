@@ -8,10 +8,10 @@ import { InlineLoader } from '@/lib/ui';
 export type PlaybackSeason = {
   number: number;
   label: string;
-  episodes: Array<{ number: number; title: string; summary?: string }>;
+  episodes: Array<{ number: number; title: string; summary?: string; duration?: number }>;
 };
 
-type MenuName = 'audio' | 'subtitle' | 'season' | null;
+type MenuName = 'audio' | 'subtitle' | 'season' | 'quality' | null;
 
 type Props = {
   title: string;
@@ -34,6 +34,13 @@ type Props = {
   subtitles: Stream['subtitles'];
   subtitlesLoading?: boolean;
   onSubtitleChange: (subtitleUrl: string) => void;
+  selectedDownloadEpisodes: number[];
+  onToggleDownloadEpisode: (episode: number) => void;
+  onSelectAllEpisodes: () => void;
+  onDownloadEpisodes: () => void;
+  downloadProgress?: { current: number; total: number } | null;
+  downloadNotice?: string;
+  actionError?: string;
   onPlay: () => void;
   onDownload: () => void;
   actionLoading?: 'play' | 'download' | null;
@@ -45,12 +52,14 @@ function DropdownTrigger({
   open,
   onPress,
   testID,
+  disabled = false,
 }: {
   label: string;
   value: string;
   open: boolean;
   onPress: () => void;
   testID: string;
+  disabled?: boolean;
 }) {
   const colors = useColors();
   return (
@@ -58,8 +67,9 @@ function DropdownTrigger({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`${label}: ${value}`}
+      disabled={disabled}
       testID={testID}
-      style={{ flex: 1, minWidth: 0, borderRadius: 15, paddingHorizontal: 12, paddingVertical: 11, backgroundColor: colors.secondary, borderWidth: 1, borderColor: open ? colors.primary : colors.border }}
+      style={{ flex: 1, minWidth: 0, borderRadius: 15, paddingHorizontal: 12, paddingVertical: 11, backgroundColor: colors.secondary, borderWidth: 1, borderColor: open ? colors.primary : colors.border, opacity: disabled ? 0.58 : 1 }}
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 5 }}>
         <View style={{ flex: 1 }}>
@@ -70,6 +80,12 @@ function DropdownTrigger({
       </View>
     </Pressable>
   );
+}
+
+function formatEpisodeDuration(seconds?: number) {
+  if (!seconds || seconds < 1) return '';
+  const minutes = Math.round(seconds / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`;
 }
 
 function Choice({
@@ -113,6 +129,8 @@ export function PlaybackOptionsPanel(props: Props) {
     ? props.subtitles.find((subtitle) => subtitle.url === props.selectedSubtitle)?.language || 'Selected subtitle'
     : 'Off';
   const selectedQuality = activeStream ? `${activeStream.quality}p` : 'Choose quality';
+  const allEpisodesSelected = !!selectedSeason?.episodes.length
+    && selectedSeason.episodes.every((episode) => props.selectedDownloadEpisodes.includes(episode.number));
   const uniqueAudioTracks = useMemo(
     () => [...new Map(props.audioTracks.map((track) => [track.id || track.code || track.label, track])).values()],
     [props.audioTracks],
@@ -148,8 +166,8 @@ export function PlaybackOptionsPanel(props: Props) {
         <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>
           <View style={{ height: 1, backgroundColor: colors.border, marginBottom: 13 }} />
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <DropdownTrigger label="Audio" value={audioLabel} open={openMenu === 'audio'} onPress={() => selectMenu('audio')} testID="audio-selector" />
-            <DropdownTrigger label="Subtitles" value={subtitleLabel} open={openMenu === 'subtitle'} onPress={() => selectMenu('subtitle')} testID="subtitle-selector" />
+            <DropdownTrigger label="Audio" value={audioLabel} open={openMenu === 'audio'} onPress={() => selectMenu('audio')} testID="audio-selector" disabled={!!props.actionLoading} />
+            <DropdownTrigger label="Subtitles" value={subtitleLabel} open={openMenu === 'subtitle'} onPress={() => selectMenu('subtitle')} testID="subtitle-selector" disabled={!!props.actionLoading} />
           </View>
 
           {openMenu === 'audio' ? (
@@ -176,13 +194,38 @@ export function PlaybackOptionsPanel(props: Props) {
 
           {props.isSeries ? (
             <View style={{ marginTop: 9 }}>
-              <DropdownTrigger
-                label="Season"
-                value={selectedSeason?.label || `Season ${props.selectedSeason}`}
-                open={openMenu === 'season'}
-                onPress={() => selectMenu('season')}
-                testID="season-selector"
-              />
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <DropdownTrigger
+                  label="Resolution"
+                  value={selectedQuality}
+                  open={openMenu === 'quality'}
+                  onPress={() => selectMenu('quality')}
+                  testID="series-resolution-selector"
+                  disabled={!!props.actionLoading}
+                />
+                <DropdownTrigger
+                  label="Season"
+                  value={selectedSeason?.label || `Season ${props.selectedSeason}`}
+                  open={openMenu === 'season'}
+                  onPress={() => selectMenu('season')}
+                  testID="season-selector"
+                  disabled={!!props.actionLoading}
+                />
+              </View>
+              {openMenu === 'quality' ? (
+                <View style={{ marginTop: 8, padding: 7, borderRadius: 16, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }}>
+                  {props.streams.map((stream) => (
+                    <Choice
+                      key={stream.id}
+                      label={`${stream.quality}p`}
+                      detail={`${stream.format} · ${stream.size}`}
+                      selected={activeStream?.id === stream.id}
+                      onPress={() => { props.onStreamChange(stream.id); setOpenMenu(null); }}
+                    />
+                  ))}
+                  {!props.streams.length ? <Text style={{ color: colors.mutedForeground, fontSize: 11, paddingHorizontal: 11, paddingVertical: 8 }}>Resolutions appear when this episode’s sources load.</Text> : null}
+                </View>
+              ) : null}
               {openMenu === 'season' ? (
                 <View style={{ marginTop: 8, padding: 7, borderRadius: 16, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }}>
                   {props.seasons.map((season) => (
@@ -198,9 +241,23 @@ export function PlaybackOptionsPanel(props: Props) {
               <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 14 }}>
                 {props.isSeries ? 'Episodes' : 'Resolution'}
               </Text>
-              <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_500Medium', fontSize: 10 }}>
-                {props.isSeries ? `${selectedSeason?.episodes.length || 0} available` : 'Choose a stream'}
-              </Text>
+              {props.isSeries && selectedSeason?.episodes.length ? (
+                <Pressable
+                  onPress={props.onSelectAllEpisodes}
+                  accessibilityRole="button"
+                  accessibilityLabel={allEpisodesSelected ? 'Clear all episode download selections' : 'Select all episodes for download'}
+                  disabled={!!props.actionLoading}
+                  testID="select-all-episodes"
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 5, paddingHorizontal: 7, opacity: props.actionLoading ? 0.55 : 1 }}
+                >
+                  <Ionicons name={allEpisodesSelected ? 'remove-circle-outline' : 'checkmark-done-outline'} size={14} color={colors.primary} />
+                  <Text style={{ color: colors.primary, fontFamily: 'Outfit_600SemiBold', fontSize: 10 }}>
+                    {allEpisodesSelected ? 'Clear all' : 'Select all'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_500Medium', fontSize: 10 }}>Choose a stream</Text>
+              )}
             </View>
             {props.loading ? <InlineLoader label="Finding playable options…"/> : null}
             {!props.loading && props.error ? (
@@ -236,29 +293,69 @@ export function PlaybackOptionsPanel(props: Props) {
               ) : !props.error ? <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>No resolutions are available yet.</Text> : null
             ) : null}
 
-            {props.isSeries && !props.loading && !props.error && selectedSeason?.episodes.length ? (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {selectedSeason.episodes.map((episode) => {
-                  const selected = episode.number === props.selectedEpisode;
+            {props.isSeries ? (
+              <View style={{ gap: 8 }}>
+                {(selectedSeason?.episodes || []).map((episode) => {
+                  const isPlaying = episode.number === props.selectedEpisode;
+                  const isForDownload = props.selectedDownloadEpisodes.includes(episode.number);
+                  const duration = formatEpisodeDuration(episode.duration);
                   return (
-                    <Pressable
+                    <View
                       key={episode.number}
-                      onPress={() => props.onEpisodeChange(episode.number)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      testID={`episode-${episode.number}`}
-                      style={{ width: '48.5%', minHeight: 74, flexDirection: 'row', alignItems: 'center', gap: 9, padding: 10, borderRadius: 15, backgroundColor: selected ? 'rgba(228,17,17,.13)' : colors.background, borderWidth: 1, borderColor: selected ? colors.primary : colors.border }}
+                      style={{ minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 9, padding: 9, borderRadius: 15, backgroundColor: isPlaying ? 'rgba(228,17,17,.1)' : colors.background, borderWidth: 1, borderColor: isPlaying ? colors.primary : colors.border }}
                     >
-                      <View style={{ width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.primary : colors.secondary }}>
-                        <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 11 }}>{String(episode.number).padStart(2, '0')}</Text>
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 11 }}>{episode.title}</Text>
-                        <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 9, marginTop: 3 }}>{selected ? 'Selected episode' : 'Tap to select'}</Text>
-                      </View>
-                    </Pressable>
+                      <Pressable
+                        onPress={() => props.onToggleDownloadEpisode(episode.number)}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: isForDownload }}
+                        accessibilityLabel={`${isForDownload ? 'Remove' : 'Add'} episode ${episode.number} ${episode.title} ${isForDownload ? 'from' : 'to'} downloads`}
+                        disabled={!!props.actionLoading}
+                        testID={`download-episode-${episode.number}`}
+                        style={{ width: 30, height: 36, alignItems: 'center', justifyContent: 'center' }}
+                      >
+                        <View style={{ width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, borderColor: isForDownload ? colors.primary : colors.mutedForeground, backgroundColor: isForDownload ? colors.primary : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                          {isForDownload ? <Ionicons name="checkmark" size={14} color={colors.primaryForeground} /> : null}
+                        </View>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => props.onEpisodeChange(episode.number)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: isPlaying }}
+                        disabled={!!props.actionLoading}
+                        testID={`episode-${episode.number}`}
+                        style={{ flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 9 }}
+                      >
+                        <View style={{ width: 33, height: 33, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: isPlaying ? colors.primary : colors.secondary }}>
+                          <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 11 }}>{String(episode.number).padStart(2, '0')}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>{episode.title}</Text>
+                          <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 3 }}>
+                            {isPlaying ? 'Selected to play' : 'Tap to play'}{duration ? ` · ${duration}` : ''}
+                          </Text>
+                        </View>
+                        <Ionicons name={isPlaying ? 'play-circle' : 'play-outline'} size={20} color={isPlaying ? colors.primary : colors.mutedForeground} />
+                      </Pressable>
+                    </View>
                   );
                 })}
+                {!selectedSeason?.episodes.length ? <Text style={{ color: colors.mutedForeground, fontSize: 11, lineHeight: 17 }}>Episode details are not available for this season.</Text> : null}
+                <Pressable
+                  onPress={props.onDownloadEpisodes}
+                  disabled={!props.selectedDownloadEpisodes.length || !!props.actionLoading}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Download ${props.selectedDownloadEpisodes.length} selected episodes`}
+                  testID="download-selected-episodes"
+                  style={{ minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 2, paddingHorizontal: 12, borderRadius: 14, backgroundColor: props.selectedDownloadEpisodes.length ? colors.secondary : colors.background, borderWidth: 1, borderColor: colors.border, opacity: props.selectedDownloadEpisodes.length ? 1 : 0.55 }}
+                >
+                  <Ionicons name={props.actionLoading === 'download' ? 'refresh' : 'download-outline'} size={17} color={colors.primary} />
+                  <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 12 }}>
+                    {props.downloadProgress
+                      ? `Preparing ${props.downloadProgress.current}/${props.downloadProgress.total}`
+                      : `Download ${props.selectedDownloadEpisodes.length} selected`}
+                  </Text>
+                  {props.selectedDownloadEpisodes.length ? <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_500Medium', fontSize: 10 }}>{selectedQuality}</Text> : null}
+                </Pressable>
               </View>
             ) : null}
           </View>
@@ -285,6 +382,8 @@ export function PlaybackOptionsPanel(props: Props) {
               <Ionicons name={props.actionLoading === 'download' ? 'refresh' : 'download-outline'} size={19} color={colors.foreground} />
             </Pressable>
           </View>
+          {props.actionError ? <Text accessibilityRole="alert" style={{ color: colors.primary, fontSize: 11, lineHeight: 16, marginTop: 10 }}>{props.actionError}</Text> : null}
+          {props.downloadNotice ? <Text style={{ color: colors.mutedForeground, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{props.downloadNotice}</Text> : null}
         </View>
       ) : null}
     </View>

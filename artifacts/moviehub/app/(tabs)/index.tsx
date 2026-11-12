@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  PanResponder,
   Pressable,
   Platform,
   RefreshControl,
@@ -12,26 +13,19 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueries } from '@tanstack/react-query';
-import { FadeInDown, Keyframe } from 'react-native-reanimated';
-import Animated from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { GENRES, MOVIE_CATEGORIES } from '@/lib/catalog';
 import { getMovies, Movie } from '@/lib/providers';
 import { Problem, Rail, RailSkeleton } from '@/lib/ui';
-import { useEffect, useRef, useState } from 'react';
-
-const FeaturedCardEnter = new Keyframe({
-  0: { opacity: 0, transform: [{ translateY: 38 }, { rotateZ: '-9deg' }, { scale: 0.93 }] },
-  54: { opacity: 1, transform: [{ translateY: -7 }, { rotateZ: '2deg' }, { scale: 1.015 }] },
-  78: { opacity: 1, transform: [{ translateY: 3 }, { rotateZ: '-0.7deg' }, { scale: 0.995 }] },
-  100: { opacity: 1, transform: [{ translateY: 0 }, { rotateZ: '0deg' }, { scale: 1 }] },
-}).duration(760);
-
-const FeaturedCardFall = new Keyframe({
-  0: { opacity: 1, transform: [{ translateY: 0 }, { rotateZ: '0deg' }, { scale: 1 }] },
-  100: { opacity: 0, transform: [{ translateY: 420 }, { translateX: 52 }, { rotateZ: '16deg' }, { scale: 0.82 }] },
-}).duration(620);
 
 export default function Home() {
   const colors = useColors();
@@ -39,6 +33,20 @@ export default function Home() {
   const router = useRouter();
   const [activeCategoryCount, setActiveCategoryCount] = useState(3);
   const [carouselIndex, setCarouselIndex] = useState(0);
+  const carouselTransitioning = useRef(false);
+  const cardRotationY = useSharedValue(0);
+  const cardTranslateX = useSharedValue(0);
+  const cardScale = useSharedValue(1);
+  const cardOpacity = useSharedValue(1);
+  const featuredCardMotion = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value,
+    transform: [
+      { perspective: 1100 },
+      { translateX: cardTranslateX.value },
+      { rotateY: `${cardRotationY.value}deg` },
+      { scale: cardScale.value },
+    ],
+  }));
   const categoryOffsets = useRef<Record<number, number>>({});
   const categoryQueries = useQueries({
     queries: MOVIE_CATEGORIES.map((category, index) => ({
@@ -63,13 +71,56 @@ export default function Home() {
   }, [categoryQueries]);
   const hero = heroSlides.length ? heroSlides[carouselIndex % heroSlides.length] : undefined;
 
+  const unlockCarousel = useCallback(() => {
+    carouselTransitioning.current = false;
+  }, []);
+  const settleCarouselCard = useCallback((nextIndex: number, direction: number) => {
+    setCarouselIndex(nextIndex);
+    cardRotationY.value = direction > 0 ? 76 : -76;
+    cardTranslateX.value = direction > 0 ? 92 : -92;
+    cardScale.value = 0.86;
+    cardOpacity.value = 0;
+    cardRotationY.value = withSpring(0, { damping: 18, stiffness: 120, mass: 0.9 });
+    cardTranslateX.value = withSpring(0, { damping: 18, stiffness: 120, mass: 0.9 });
+    cardScale.value = withSpring(1, { damping: 18, stiffness: 120, mass: 0.9 });
+    cardOpacity.value = withTiming(1, { duration: 250 }, (finished) => {
+      if (finished) runOnJS(unlockCarousel)();
+    });
+  }, [cardOpacity, cardRotationY, cardScale, cardTranslateX, unlockCarousel]);
+  const navigateCarousel = useCallback((direction: number, requestedIndex?: number) => {
+    const length = heroSlides.length;
+    if (length < 2 || carouselTransitioning.current) return;
+    const step = direction >= 0 ? 1 : -1;
+    const nextIndex = requestedIndex ?? (carouselIndex + step + length) % length;
+    if (nextIndex === carouselIndex) return;
+    carouselTransitioning.current = true;
+    cardRotationY.value = withTiming(step > 0 ? -74 : 74, { duration: 330 });
+    cardTranslateX.value = withTiming(step > 0 ? -108 : 108, { duration: 330 });
+    cardScale.value = withTiming(0.84, { duration: 330 });
+    cardOpacity.value = withTiming(0, { duration: 330 }, (finished) => {
+      if (finished) runOnJS(settleCarouselCard)(nextIndex, step);
+    });
+  }, [cardOpacity, cardRotationY, cardScale, cardTranslateX, carouselIndex, heroSlides.length, settleCarouselCard]);
+  const carouselPanResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) => (
+      Math.abs(gesture.dx) > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2
+    ),
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => (
+      Math.abs(gesture.dx) > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2
+    ),
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dx < -42) navigateCarousel(1);
+      else if (gesture.dx > 42) navigateCarousel(-1);
+    },
+    onPanResponderTerminationRequest: () => false,
+  }), [navigateCarousel]);
+
   useEffect(() => {
     if (heroSlides.length < 2) return undefined;
-    const timer = setTimeout(() => {
-      setCarouselIndex((index) => (index + 1) % heroSlides.length);
-    }, 4000);
+    const timer = setTimeout(() => navigateCarousel(1), 4000);
     return () => clearTimeout(timer);
-  }, [carouselIndex, heroSlides.length]);
+  }, [carouselIndex, heroSlides.length, navigateCarousel]);
 
   const loadVisibleCategories = (event: any) => {
     const { contentOffset, layoutMeasurement } = event.nativeEvent;
@@ -175,7 +226,11 @@ export default function Home() {
 
       {hero && (
         <View style={{ marginTop: 2, marginBottom: 5 }}>
-          <View style={{ height: 390, marginHorizontal: 14, overflow: 'hidden', position: 'relative' }}>
+          <View
+            {...carouselPanResponder.panHandlers}
+            accessibilityLabel="Featured titles. Swipe left or right to rotate."
+            style={{ height: 390, marginHorizontal: 14, overflow: 'hidden', position: 'relative' }}
+          >
             {heroSlides.length > 1 && [1, -1].map((offset) => {
               const index = (carouselIndex + offset + heroSlides.length) % heroSlides.length;
               const movie = heroSlides[index];
@@ -208,7 +263,10 @@ export default function Home() {
                   }}
                   >
                   <Pressable
-                    onPress={() => setCarouselIndex(index)}
+                    onPress={() => {
+                      const forwardDistance = (index - carouselIndex + heroSlides.length) % heroSlides.length;
+                      navigateCarousel(forwardDistance <= heroSlides.length / 2 ? 1 : -1, index);
+                    }}
                     accessibilityLabel={`Show ${movie.title}`}
                     style={{ flex: 1 }}
                   >
@@ -239,9 +297,7 @@ export default function Home() {
 
             <Animated.View
               key={String(hero.subjectId)}
-              entering={FeaturedCardEnter}
-              exiting={FeaturedCardFall}
-              style={{
+              style={[{
                 position: 'absolute',
                 left: '16%',
                 top: 0,
@@ -258,7 +314,7 @@ export default function Home() {
                 shadowOpacity: 0.42,
                 shadowRadius: 20,
                 elevation: 12,
-              }}
+              }, featuredCardMotion]}
             >
               <Image
                 source={{ uri: hero.cover?.url || hero.coverUrl || hero.poster || '' }}
@@ -310,33 +366,16 @@ export default function Home() {
               </View>
             </Animated.View>
 
-            {heroSlides.length > 1 ? (
-              <>
-                <Pressable
-                  onPress={() => setCarouselIndex((index) => (index - 1 + heroSlides.length) % heroSlides.length)}
-                  accessibilityLabel="Previous featured title"
-                  testID="hero-previous"
-                  style={{ position: 'absolute', left: 5, top: '43%', width: 38, height: 38, borderRadius: 21, backgroundColor: 'rgba(8,9,11,.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,.26)', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}
-                >
-                  <Ionicons name="chevron-back" size={19} color="#fff" />
-                </Pressable>
-                <Pressable
-                  onPress={() => setCarouselIndex((index) => (index + 1) % heroSlides.length)}
-                  accessibilityLabel="Next featured title"
-                  testID="hero-next"
-                  style={{ position: 'absolute', right: 5, top: '43%', width: 38, height: 38, borderRadius: 21, backgroundColor: 'rgba(8,9,11,.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,.26)', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}
-                >
-                  <Ionicons name="chevron-forward" size={19} color="#fff" />
-                </Pressable>
-              </>
-            ) : null}
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 3 }}>
             {heroSlides.slice(0, 6).map((slide, index) => (
               <Pressable
                 key={String(slide.subjectId)}
-                onPress={() => setCarouselIndex(index)}
+                onPress={() => {
+                  const forwardDistance = (index - carouselIndex + heroSlides.length) % heroSlides.length;
+                  navigateCarousel(forwardDistance <= heroSlides.length / 2 ? 1 : -1, index);
+                }}
                 accessibilityLabel={`Show featured title ${index + 1}`}
                 style={{
                   width: index === carouselIndex % heroSlides.length ? 22 : 5,
