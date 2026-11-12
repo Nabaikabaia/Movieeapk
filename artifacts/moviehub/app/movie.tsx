@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -16,9 +16,38 @@ import { FadeInDown } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
 import { getDetails, getRecommendations, getStreams, Movie, Stream } from '@/lib/providers';
+import { PlaybackOptionsPanel, PlaybackSeason } from '@/components/PlaybackOptionsPanel';
 import { useFavorites } from '@/lib/Favorites';
 import { useDownloads } from '@/lib/Downloads';
-import { Empty, InlineLoader, Loading, Problem, Rail } from '@/lib/ui';
+import { Loading, Problem, Rail } from '@/lib/ui';
+
+function buildPlaybackSeasons(input: any[]): PlaybackSeason[] {
+  return (Array.isArray(input) ? input : []).map((item: any, index: number) => {
+    const number = Number(item.se ?? item.season ?? index + 1) || index + 1;
+    const rawEpisodes = item.episodes || item.episodeList || item.eps || item.allEp;
+    const episodeRows = Array.isArray(rawEpisodes)
+      ? rawEpisodes
+      : typeof rawEpisodes === 'string'
+        ? rawEpisodes.split(/[|,;]/).map((entry) => entry.trim()).filter(Boolean)
+        : [];
+    const count = Math.min(60, Math.max(episodeRows.length, Number(item.maxEp || item.episodeCount || 0)));
+    const episodes = Array.from({ length: count }, (_, episodeIndex) => {
+      const source = episodeRows[episodeIndex];
+      const episodeNumber = typeof source === 'object'
+        ? Number(source.ep ?? source.episode ?? source.number ?? episodeIndex + 1)
+        : Number(String(source || '').match(/\d+/)?.[0] || episodeIndex + 1);
+      const title = typeof source === 'object'
+        ? String(source.title || source.name || source.episodeName || `Episode ${String(episodeNumber).padStart(2, '0')}`)
+        : `Episode ${String(episodeNumber).padStart(2, '0')}`;
+      return {
+        number: episodeNumber || episodeIndex + 1,
+        title,
+        summary: typeof source === 'object' ? String(source.description || source.summary || '') : '',
+      };
+    });
+    return { number, label: String(item.name || item.title || `Season ${number}`), episodes };
+  });
+}
 
 export default function MovieDetails() {
   const colors = useColors();
@@ -28,6 +57,9 @@ export default function MovieDetails() {
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   const [isMuted, setIsMuted] = useState(true);
+  const [selectedStreamId, setSelectedStreamId] = useState('');
+  const [selectedAudio, setSelectedAudio] = useState('auto');
+  const [selectedSubtitle, setSelectedSubtitle] = useState('');
   const detailsQuery = useQuery({
     queryKey: ['details', id],
     queryFn: () => getDetails(String(id)),
@@ -37,6 +69,9 @@ export default function MovieDetails() {
   const details = detailsQuery.data;
   const subject = details?.subject as Movie | undefined;
   const title = subject?.title || 'Movie details';
+  const isSeries = subject?.subjectType === 2;
+  const sourceSeason = isSeries ? season : 0;
+  const sourceEpisode = isSeries ? episode : 0;
   const trailerUrl = subject?.trailer?.videoAddress?.url;
   const trailerPlayer = useVideoPlayer(trailerUrl || null);
   const { items: favorites, toggle } = useFavorites();
@@ -44,8 +79,8 @@ export default function MovieDetails() {
   const isFavorite = favorites.some((item) => item.subjectId === subject?.subjectId);
   const detailPath = String(subject?.detailPath || id || '');
   const sourceQuery = useQuery({
-    queryKey: ['movie-api-source', subject?.subjectId, detailPath, season, episode],
-    queryFn: () => getStreams(subject!, season, episode),
+    queryKey: ['movie-api-source', subject?.subjectId, detailPath, sourceSeason, sourceEpisode],
+    queryFn: () => getStreams(subject!, sourceSeason, sourceEpisode),
     enabled: !!subject?.subjectId && !!subject?.detailPath,
     staleTime: 240_000,
     retry: false,
@@ -56,6 +91,35 @@ export default function MovieDetails() {
     enabled: !!subject?.subjectId,
     staleTime: 300_000,
   });
+  const rawSeasons = details?.resource?.seasons || subject?.seasons || [];
+  const playbackSeasons = useMemo(() => buildPlaybackSeasons(rawSeasons), [rawSeasons]);
+  const activeSeason = playbackSeasons.find((item) => item.number === season);
+  const streams = sourceQuery.data || [];
+  const selectedStream = streams.find((stream) => stream.id === selectedStreamId) || streams[0];
+  const audioTracks = [...new Map(streams.flatMap((stream) => stream.audioTracks).map((track) => [track.id || track.code || track.label, track])).values()];
+  const subtitles = selectedStream?.subtitles || [];
+
+  useEffect(() => {
+    if (playbackSeasons.length && !playbackSeasons.some((item) => item.number === season)) {
+      setSeason(playbackSeasons[0].number);
+      setEpisode(1);
+    }
+  }, [playbackSeasons, season]);
+
+  useEffect(() => {
+    const streams = sourceQuery.data || [];
+    if (!streams.length) return;
+    setSelectedStreamId((current) => streams.some((stream) => stream.id === current) ? current : streams[0].id);
+  }, [sourceQuery.data]);
+
+  useEffect(() => {
+    if (selectedSubtitle && !subtitles.some((subtitle) => subtitle.url === selectedSubtitle)) {
+      setSelectedSubtitle('');
+    }
+    if (selectedAudio !== 'auto' && !audioTracks.some((track) => track.id === selectedAudio || track.code === selectedAudio)) {
+      setSelectedAudio('auto');
+    }
+  }, [selectedStreamId, selectedSubtitle, selectedAudio, subtitles, audioTracks]);
 
   useEffect(() => {
     trailerPlayer.muted = isMuted;
@@ -74,23 +138,29 @@ export default function MovieDetails() {
   const openPlayer = (stream?: Stream) => {
     if (!subject) return;
     const url = stream?.url || stream?.proxyUrl;
+    const subtitle = stream?.subtitles.find((item) => item.url === selectedSubtitle);
+    const params = {
+      title,
+      id: String(subject.subjectId),
+      detailPath,
+      season: String(sourceSeason),
+      episode: String(sourceEpisode),
+      kind: 'movie',
+      subjectType: String(subject.subjectType || 1),
+      audio: selectedAudio,
+      subtitleUrl: selectedSubtitle,
+      subtitleLanguage: subtitle?.language || '',
+    };
     if (url) {
       router.push({
         pathname: '/player',
-        params: { title, url, kind: 'movie' },
+        params: { ...params, url },
       });
       return;
     }
     router.push({
       pathname: '/player',
-      params: {
-        title,
-        id: String(subject.subjectId),
-        detailPath,
-        season: String(season),
-        episode: String(episode),
-        kind: 'movie',
-      },
+      params,
     });
   };
 
@@ -106,9 +176,6 @@ export default function MovieDetails() {
     router.push({ pathname: '/movie', params: { id: String(movie.subjectId) } });
   };
 
-  const seasons = details?.resource?.seasons || subject?.seasons || [];
-  const currentSeason = seasons.find((item: any) => Number(item.se || 1) === season);
-  const episodeCount = Math.min(60, Number(currentSeason?.maxEp || currentSeason?.episodeCount || 0));
   const actors = (details?.stars || []).filter((person: any) => person.staffType === 1);
   const crew = (details?.stars || []).filter((person: any) => person.staffType !== 1);
   const image = subject?.cover?.url || subject?.coverUrl || subject?.still?.url || '';
@@ -127,7 +194,7 @@ export default function MovieDetails() {
     );
   }
 
-  const playSource = (stream?: Stream) => openPlayer(stream);
+  const playSelected = () => openPlayer(selectedStream);
 
   return (
     <ScrollView
@@ -204,7 +271,7 @@ export default function MovieDetails() {
             </Animated.View>
             <View style={{ flexDirection: 'row', gap: 9, marginTop: 18 }}>
               <Pressable
-                onPress={() => playSource()}
+                onPress={playSelected}
                 testID="play-movie"
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderRadius: 24, paddingHorizontal: 19, paddingVertical: 12 }}
               >
@@ -242,78 +309,35 @@ export default function MovieDetails() {
         </ScrollView>
       ) : null}
 
-      {!!seasons.length ? (
-        <View style={{ paddingHorizontal: 20, marginTop: 25 }}>
-          <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 20 }}>Episodes</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 9, marginTop: 13 }}>
-            {seasons.map((item: any, index: number) => {
-              const value = Number(item.se || index + 1);
-              return (
-                <Pressable
-                  key={value}
-                  onPress={() => { setSeason(value); setEpisode(1); }}
-                  style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 15, backgroundColor: season === value ? colors.primary : colors.card }}
-                >
-                  <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold' }}>Season {value}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          {episodeCount > 0 ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, marginTop: 12 }}>
-              {Array.from({ length: episodeCount }, (_, index) => index + 1).map((value) => (
-                <Pressable
-                  key={value}
-                  onPress={() => setEpisode(value)}
-                  style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: episode === value ? colors.primary : colors.card, alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold' }}>{value}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          ) : null}
-        </View>
+      {isSeries || subject ? (
+        <PlaybackOptionsPanel
+          title={title}
+          isSeries={isSeries}
+          seasons={playbackSeasons}
+          selectedSeason={season}
+          selectedEpisode={episode}
+          onSeasonChange={(value) => { setSeason(value); setEpisode(1); }}
+          onEpisodeChange={setEpisode}
+          streams={streams}
+          loading={sourceQuery.isFetching}
+          error={sourceQuery.isError ? sourceQuery.error.message : undefined}
+          onRetry={() => void sourceQuery.refetch()}
+          selectedStreamId={selectedStreamId}
+          onStreamChange={setSelectedStreamId}
+          selectedAudio={selectedAudio}
+          audioTracks={audioTracks}
+          onAudioChange={setSelectedAudio}
+          selectedSubtitle={selectedSubtitle}
+          subtitles={subtitles}
+          onSubtitleChange={setSelectedSubtitle}
+          onPlay={playSelected}
+          onDownload={() => {
+            if (!selectedStream) return;
+            const suffix = isSeries ? ` S${season} E${episode}` : '';
+            void startDownload(`${title}${suffix}`, selectedStream.downloadUrl);
+          }}
+        />
       ) : null}
-
-      <View style={{ paddingHorizontal: 20, marginTop: 28 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <View>
-            <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 20 }}>
-              Ready to watch
-            </Text>
-            <Text style={{ color: colors.mutedForeground, fontSize: 12, marginTop: 3 }}>
-              Movie API · one stream provider
-            </Text>
-          </View>
-          {sourceQuery.isFetching ? <InlineLoader label="Finding available streams…"/> : null}
-        </View>
-        {sourceQuery.data?.length ? (
-          sourceQuery.data.map((stream) => (
-            <View
-              key={stream.id}
-              style={{ flexDirection: 'row', alignItems: 'center', padding: 14, marginTop: 10, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}
-            >
-              <View style={{ backgroundColor: colors.secondary, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 7 }}>
-                <Text style={{ color: colors.primary, fontFamily: 'Outfit_700Bold', fontSize: 12 }}>{stream.quality}p</Text>
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold' }}>{stream.format.toUpperCase()} · {stream.size}</Text>
-                <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 3 }}>Movie API source</Text>
-              </View>
-              <Pressable onPress={() => playSource(stream)} accessibilityLabel={`Play ${stream.quality}p`} style={{ padding: 8 }}>
-                <Ionicons name="play-circle" size={27} color={colors.primary} />
-              </Pressable>
-              <Pressable onPress={() => void startDownload(`${title}${subject.subjectType === 2 ? ` S${season} E${episode}` : ''}`, stream.downloadUrl)} accessibilityLabel={`Download ${stream.quality}p`} style={{ padding: 8 }}>
-                <Ionicons name="download-outline" size={21} color={colors.foreground} />
-              </Pressable>
-            </View>
-          ))
-        ) : sourceQuery.isError ? (
-          <Problem message={sourceQuery.error.message} retry={() => void sourceQuery.refetch()} />
-        ) : !sourceQuery.isFetching ? (
-          <Empty icon="videocam-off-outline" title="No stream available" subtitle="The Movie API has no source for this title right now. Try again later." />
-        ) : null}
-      </View>
 
       {actors.length ? (
         <View style={{ marginTop: 30 }}>

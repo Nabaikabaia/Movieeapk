@@ -59,7 +59,7 @@ export default function Discover() {
           {genre?.label || selectedCategory?.title || 'Find your next watch'}
         </Text>
         <Pressable
-          onPress={() => router.push('/search' as any)}
+          onPress={() => router.push('/(tabs)/search' as any)}
           style={{
             marginTop: 19,
             borderRadius: 16,

@@ -52,11 +52,11 @@ export default function Home() {
 
   useEffect(() => {
     if (heroSlides.length < 2) return undefined;
-    const timer = setInterval(() => {
+    const timer = setTimeout(() => {
       setCarouselIndex((index) => (index + 1) % heroSlides.length);
     }, 4000);
-    return () => clearInterval(timer);
-  }, [heroSlides.length]);
+    return () => clearTimeout(timer);
+  }, [carouselIndex, heroSlides.length]);
 
   const loadVisibleCategories = (event: any) => {
     const { contentOffset, layoutMeasurement } = event.nativeEvent;
@@ -120,7 +120,7 @@ export default function Home() {
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {[
-            { icon: 'search-outline', label: 'Search', path: '/search' },
+            { icon: 'search-outline', label: 'Search', path: '/(tabs)/search' },
             { icon: 'bookmark-outline', label: 'Library', path: '/(tabs)/library' },
           ].map((item) => (
             <Pressable
@@ -185,6 +185,26 @@ export default function Home() {
                 />
               ))}
             </View>
+            {heroSlides.length > 1 ? (
+              <>
+                <Pressable
+                  onPress={() => setCarouselIndex((index) => (index - 1 + heroSlides.length) % heroSlides.length)}
+                  accessibilityLabel="Previous featured title"
+                  testID="hero-previous"
+                  style={{ position: 'absolute', left: 12, top: '30%', width: 40, height: 40, borderRadius: 22, backgroundColor: 'rgba(8,9,11,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.22)', alignItems: 'center', justifyContent: 'center', zIndex: 3 }}
+                >
+                  <Ionicons name="chevron-back" size={20} color="#fff" />
+                </Pressable>
+                <Pressable
+                  onPress={() => setCarouselIndex((index) => (index + 1) % heroSlides.length)}
+                  accessibilityLabel="Next featured title"
+                  testID="hero-next"
+                  style={{ position: 'absolute', right: 12, top: '30%', width: 40, height: 40, borderRadius: 22, backgroundColor: 'rgba(8,9,11,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.22)', alignItems: 'center', justifyContent: 'center', zIndex: 3 }}
+                >
+                  <Ionicons name="chevron-forward" size={20} color="#fff" />
+                </Pressable>
+              </>
+            ) : null}
             <View style={{ padding: 22, paddingBottom: 24 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <View style={{ backgroundColor: colors.primary, borderRadius: 5, paddingHorizontal: 9, paddingVertical: 5 }}>

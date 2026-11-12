@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -12,16 +13,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 
 const tabItems = [
-  { route: 'index', label: 'Home', icon: 'home-outline' },
-  { route: 'discover', label: 'Explore', icon: 'compass-outline' },
-  { route: 'sports', label: 'Sports', icon: 'trophy-outline' },
-  { route: 'iptv', label: 'IPTV', icon: 'globe-outline' },
-  { route: 'pluto', label: 'Pluto', icon: 'planet-outline' },
-  { route: 'downloads', label: 'Downloads', icon: 'download-outline' },
+  { route: 'index', href: '/', label: 'Home', icon: 'home-outline' },
+  { route: 'discover', href: '/(tabs)/discover', label: 'Explore', icon: 'compass-outline' },
+  { route: 'sports', href: '/(tabs)/sports', label: 'Sports', icon: 'trophy-outline' },
+  { route: 'iptv', href: '/(tabs)/iptv', label: 'IPTV', icon: 'globe-outline' },
+  { route: 'pluto', href: '/(tabs)/pluto', label: 'Pluto', icon: 'planet-outline' },
+  { route: 'downloads', href: '/(tabs)/downloads', label: 'Downloads', icon: 'download-outline' },
 ] as const;
 
 function FloatingTabItem({
   route,
+  href,
   routeKey,
   label,
   icon,
@@ -29,6 +31,7 @@ function FloatingTabItem({
   navigation,
 }: {
   route: string;
+  href: string;
   routeKey: string;
   label: string;
   icon: string;
@@ -36,6 +39,7 @@ function FloatingTabItem({
   navigation: any;
 }) {
   const colors = useColors();
+  const router = useRouter();
   const selection = useSharedValue(focused ? 1 : 0);
 
   useEffect(() => {
@@ -50,14 +54,17 @@ function FloatingTabItem({
   }));
 
   const press = () => {
-    const event = navigation.emit({ type: 'tabPress', target: routeKey, canPreventDefault: true });
-    if (!focused && !event.defaultPrevented) navigation.navigate(route as never);
+    if (focused) return;
+    const event = navigation?.emit?.({ type: 'tabPress', target: routeKey, canPreventDefault: true });
+    if (event?.defaultPrevented) return;
+    if (typeof navigation?.navigate === 'function') navigation.navigate(route as never);
+    else router.navigate(href as never);
   };
 
   return (
     <Pressable
       onPress={press}
-      onLongPress={() => navigation.emit({ type: 'tabLongPress', target: routeKey })}
+      onLongPress={() => navigation?.emit?.({ type: 'tabLongPress', target: routeKey })}
       accessibilityRole="tab"
       accessibilityState={{ selected: focused }}
       accessibilityLabel={label}
@@ -145,6 +152,7 @@ function FloatingGlassBar({ state, navigation }: any) {
             <FloatingTabItem
               key={route.key}
               route={route.name}
+              href={item.href}
               routeKey={route.key}
               label={item.label}
               icon={item.icon}
@@ -177,8 +185,8 @@ export default function TabLayout() {
       <Tabs.Screen name="iptv" options={{ title: 'IPTV' }} />
       <Tabs.Screen name="pluto" options={{ title: 'Pluto TV' }} />
       <Tabs.Screen name="downloads" options={{ title: 'Downloads' }} />
-      <Tabs.Screen name="library" options={{ href: null }} />
-      <Tabs.Screen name="search" options={{ href: null }} />
+      <Tabs.Screen name="library" options={{ title: 'Library' }} />
+      <Tabs.Screen name="search" options={{ title: 'Search' }} />
     </Tabs>
   );
 }

@@ -23,7 +23,17 @@ export type Movie = {
   imdbRatingValue?: string;
   [key: string]: any;
 };
-export type Stream = { id: string; url: string; proxyUrl: string; downloadUrl: string; quality: string; size: string; format: string; subtitles: { language: string; code: string; url: string }[] };
+export type Stream = {
+  id: string;
+  url: string;
+  proxyUrl: string;
+  downloadUrl: string;
+  quality: string;
+  size: string;
+  format: string;
+  audioTracks: { id: string; language: string; code: string; label: string }[];
+  subtitles: { language: string; code: string; url: string }[];
+};
 const safe = async (url: string, init?: RequestInit) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 16000);
@@ -110,14 +120,30 @@ export async function getStreams(movie: Movie, season = 0, episode = 0): Promise
   });
   const d = await safe(`https://movieapi.freesrv.com/moviebox/sources?${p}`);
   const raw = d.data?.streams || d.streams || [];
-  return raw.map((x: any, i: number) => ({
-    id: String(x.id || `stream-${i}`), url: x.playUrl || x.url || x.proxyUrl || x.stream_url || '',
-    proxyUrl: x.playUrl || x.proxyUrl || x.stream_url || x.url || '',
-    downloadUrl: x.downloadUrl || x.download_url || x.proxyUrl || x.url || '',
-    quality: String(x.quality || x.resolution || '480').replace(/[^\d]/g, '') || '480',
-    size: x.size || x.size_mb ? String(x.size || `${x.size_mb} MB`) : '—', format: x.format || 'MP4',
-    subtitles: (d.data?.subtitles || d.data?.captions || []).map((s: any) => ({ language: s.language_name || s.lanName || s.language || s.lan || 'Subtitle', code: s.language || s.lan || '', url: s.url })),
-  })).filter((x: Stream) => !!x.url);
+  return raw.map((x: any, i: number) => {
+    const rawAudio = x.audioTracks || x.audio_tracks || x.audios || x.audio || d.data?.audioTracks || d.data?.audio_tracks || [];
+    const rawSubtitles = x.subtitles || x.captions || d.data?.subtitles || d.data?.captions || [];
+    return {
+      id: String(x.id || `stream-${i}`),
+      url: x.playUrl || x.url || x.proxyUrl || x.stream_url || '',
+      proxyUrl: x.playUrl || x.proxyUrl || x.stream_url || x.url || '',
+      downloadUrl: x.downloadUrl || x.download_url || x.proxyUrl || x.url || '',
+      quality: String(x.quality || x.resolution || '480').replace(/[^\d]/g, '') || '480',
+      size: x.size || x.size_mb ? String(x.size || `${x.size_mb} MB`) : '—',
+      format: x.format || 'MP4',
+      audioTracks: (Array.isArray(rawAudio) ? rawAudio : []).map((track: any, trackIndex: number) => ({
+        id: String(track.id || track.trackId || track.code || `audio-${trackIndex}`),
+        language: String(track.language || track.lang || track.languageCode || ''),
+        code: String(track.code || track.languageCode || track.language || track.lang || ''),
+        label: String(track.label || track.name || track.title || track.language_name || track.language || `Audio ${trackIndex + 1}`),
+      })),
+      subtitles: (Array.isArray(rawSubtitles) ? rawSubtitles : []).filter((subtitle: any) => subtitle.url || subtitle.file || subtitle.src).map((subtitle: any) => ({
+        language: String(subtitle.language_name || subtitle.lanName || subtitle.language || subtitle.lan || subtitle.label || 'Subtitle'),
+        code: String(subtitle.language || subtitle.lan || subtitle.code || ''),
+        url: String(subtitle.url || subtitle.file || subtitle.src || ''),
+      })),
+    };
+  }).filter((stream: Stream) => !!stream.url);
 }
 export async function getPluto() {
   const d = await safe('https://api.nabeestech.com/pluto/channels');

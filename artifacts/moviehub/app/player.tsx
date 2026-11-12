@@ -16,6 +16,7 @@ import { useColors } from '@/hooks/useColors';
 import { getStreams, Movie, verifyPluto } from '@/lib/providers';
 import { useDownloads } from '@/lib/Downloads';
 import { useQuery } from '@tanstack/react-query';
+import { parseCaptions, CaptionCue } from '@/lib/subtitles';
 
 const speedSteps = [1, 1.25, 1.5, 1.75, 2];
 
@@ -53,6 +54,10 @@ export default function Player() {
     detailPath?: string;
     season?: string;
     episode?: string;
+    subjectType?: string;
+    audio?: string;
+    subtitleUrl?: string;
+    subtitleLanguage?: string;
     local?: string;
     channelId?: string;
     kind?: string;
@@ -69,6 +74,11 @@ export default function Player() {
   const [speed, setSpeed] = useState(1);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [trackWidth, setTrackWidth] = useState(1);
+  const [captions, setCaptions] = useState<CaptionCue[]>([]);
+  const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [audioTracks, setAudioTracks] = useState<any[]>([]);
+  const [audioMenuOpen, setAudioMenuOpen] = useState(false);
+  const [activeAudioId, setActiveAudioId] = useState('auto');
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const videoViewRef = useRef<VideoView>(null);
 
@@ -80,7 +90,7 @@ export default function Player() {
       const sources = await getStreams({
         subjectId: String(params.id),
         title,
-        subjectType: 0,
+        subjectType: Number(params.subjectType || 0),
         detailPath: String(params.detailPath || ''),
       } as Movie, Number(params.season || 0), Number(params.episode || 0));
       if (!sources.length) throw new Error('This title currently has no available playback sources.');
@@ -119,7 +129,11 @@ export default function Player() {
       if (event.status === 'error') setFailure(event.error?.message || 'This video could not be played.');
     });
     const playSub = player.addListener('playingChange', (event) => setPlaying(event.isPlaying));
+    const audioSub = player.addListener('availableAudioTracksChange', (event) => {
+      setAudioTracks(event.availableAudioTracks || []);
+    });
     player.timeUpdateEventInterval = 0.5;
+    setAudioTracks(player.availableAudioTracks || []);
     setPlayerStatus(player.status);
     setPlaying(player.playing);
     setDuration(player.duration);
@@ -127,8 +141,44 @@ export default function Player() {
       timeSub.remove();
       statusSub.remove();
       playSub.remove();
+      audioSub.remove();
     };
   }, [player]);
+
+  const requestedAudio = String(params.audio || '');
+  const subtitleUrl = String(params.subtitleUrl || '');
+  const subtitleLanguage = String(params.subtitleLanguage || '');
+
+  useEffect(() => {
+    if (!subtitleUrl) {
+      setCaptions([]);
+      setSubtitleLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSubtitleLoading(true);
+    void fetch(subtitleUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error('Subtitle download failed');
+        return response.text();
+      })
+      .then((text) => {
+        if (!cancelled) setCaptions(parseCaptions(text));
+      })
+      .catch(() => { if (!cancelled) setCaptions([]); })
+      .finally(() => { if (!cancelled) setSubtitleLoading(false); });
+    return () => { cancelled = true; };
+  }, [subtitleUrl]);
+
+  useEffect(() => {
+    if (!requestedAudio || requestedAudio === 'auto' || !audioTracks.length) return;
+    const selected = audioTracks.find((track) =>
+      [track.id, track.code, track.language, track.label, track.name].some((value) => String(value || '') === requestedAudio),
+    );
+    if (!selected) return;
+    if (player.audioTrack?.id !== selected.id) player.audioTrack = selected;
+    setActiveAudioId(String(selected.id || selected.label || selected.language || 'auto'));
+  }, [audioTracks, player, requestedAudio]);
 
   useEffect(() => {
     if (!url) return;
@@ -150,6 +200,20 @@ export default function Player() {
   const progress = duration > 0 && Number.isFinite(duration) ? Math.min(1, currentTime / duration) : 0;
   const bufferedProgress = duration > 0 && Number.isFinite(duration) ? Math.min(1, bufferedTime / duration) : 0;
   const isBuffering = !!url && (playerStatus === 'loading' || playerStatus === 'idle') && !failure;
+  const activeCaption = captions.find((cue) => currentTime >= cue.start && currentTime <= cue.end)?.text;
+  const currentAudio = audioTracks.find((track) => String(track.id || track.label || track.language) === activeAudioId);
+
+  const chooseAudio = (track?: any) => {
+    if (!track) {
+      player.audioTrack = null;
+      setActiveAudioId('auto');
+    } else {
+      player.audioTrack = track;
+      setActiveAudioId(String(track.id || track.label || track.language || 'auto'));
+    }
+    setAudioMenuOpen(false);
+    revealControls();
+  };
 
   const revealControls = () => {
     setControlsVisible(true);
@@ -236,10 +300,43 @@ export default function Player() {
             <Pressable onPress={cycleSpeed} accessibilityLabel={`Playback speed ${speed} times`} style={styles.speedButton}>
               <Text style={styles.speedLabel}>{speed}×</Text>
             </Pressable>
+            {audioTracks.length > 1 ? (
+              <Pressable
+                onPress={() => setAudioMenuOpen((open) => !open)}
+                accessibilityLabel={`Audio track ${currentAudio?.label || currentAudio?.language || 'Auto'}`}
+                style={styles.audioButton}
+              >
+                <Ionicons name="language-outline" size={17} color="#fff" />
+              </Pressable>
+            ) : null}
             <Pressable onPress={() => void videoViewRef.current?.enterFullscreen()} accessibilityLabel="Enter fullscreen" style={styles.iconButton}>
               <Ionicons name="scan-outline" size={20} color="#fff" />
             </Pressable>
           </View>
+
+          {audioMenuOpen ? (
+            <View style={[styles.audioMenu, { top: Platform.OS === 'web' ? 126 : 98 }]}>
+              <Text style={styles.audioMenuTitle}>AUDIO TRACK</Text>
+              <Pressable onPress={() => chooseAudio()} style={styles.audioOption}>
+                <Text style={styles.audioOptionLabel}>Auto / source default</Text>
+                {activeAudioId === 'auto' ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+              </Pressable>
+              {audioTracks.map((track, index) => {
+                const id = String(track.id || track.label || track.language || index);
+                const label = String(track.label || track.name || track.language || `Audio ${index + 1}`);
+                const selected = activeAudioId === id;
+                return (
+                  <Pressable key={id} onPress={() => chooseAudio(track)} style={styles.audioOption}>
+                    <View style={{ flex: 1 }}>
+                      <Text numberOfLines={1} style={styles.audioOptionLabel}>{label}</Text>
+                      {track.language && track.language !== label ? <Text style={styles.audioOptionDetail}>{track.language}</Text> : null}
+                    </View>
+                    {selected ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
 
           <View style={styles.centerControls}>
             {!failure ? (
@@ -307,6 +404,16 @@ export default function Player() {
           </View>
         </View>
       )}
+
+      {subtitleLoading ? (
+        <View pointerEvents="none" style={[styles.captionWrap, { bottom: controlsVisible ? 152 : 62 }]}>
+          <Text style={styles.captionText}>Loading {subtitleLanguage || 'subtitles'}…</Text>
+        </View>
+      ) : activeCaption ? (
+        <View pointerEvents="none" style={[styles.captionWrap, { bottom: controlsVisible ? 152 : 62 }]}>
+          <Text style={styles.captionText}>{activeCaption}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -319,6 +426,12 @@ const styles = StyleSheet.create({
   title: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 16 },
   subtitle: { color: 'rgba(255,255,255,.6)', fontFamily: 'Outfit_500Medium', fontSize: 9, letterSpacing: 1.2, marginTop: 4 },
   iconButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
+  audioButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
+  audioMenu: { position: 'absolute', right: 68, width: 230, padding: 9, borderRadius: 17, backgroundColor: 'rgba(18,18,21,.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,.16)', zIndex: 5 },
+  audioMenuTitle: { color: 'rgba(255,255,255,.56)', fontFamily: 'Outfit_700Bold', fontSize: 9, letterSpacing: 1.2, paddingHorizontal: 9, paddingTop: 7, paddingBottom: 5 },
+  audioOption: { minHeight: 39, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 9, borderRadius: 10 },
+  audioOptionLabel: { color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 11 },
+  audioOptionDetail: { color: 'rgba(255,255,255,.55)', fontSize: 9, marginTop: 2 },
   speedButton: { minWidth: 43, height: 42, paddingHorizontal: 9, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
   speedLabel: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 12 },
   centerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 35 },
@@ -339,6 +452,8 @@ const styles = StyleSheet.create({
   liveDot: { width: 7, height: 7, borderRadius: 4 },
   liveLabel: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 11, letterSpacing: 1 },
   centerMessage: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', padding: 26, gap: 13 },
+  captionWrap: { position: 'absolute', left: 22, right: 22, alignItems: 'center', zIndex: 6 },
+  captionText: { overflow: 'hidden', color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 17, lineHeight: 24, textAlign: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, backgroundColor: 'rgba(0,0,0,.78)', textShadowColor: 'rgba(0,0,0,.85)', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 3 },
   bufferText: { color: 'rgba(255,255,255,.76)', fontFamily: 'Outfit_600SemiBold', fontSize: 13, textAlign: 'center' },
   errorCard: { maxWidth: 320, alignItems: 'center', gap: 10, padding: 24, borderRadius: 20, backgroundColor: 'rgba(18,18,21,.92)' },
   errorTitle: { color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 16, textAlign: 'center', lineHeight: 23 },
