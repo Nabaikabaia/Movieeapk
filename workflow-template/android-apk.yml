@@ -1,0 +1,77 @@
+name: Build Moviehub Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "artifacts/moviehub/**"
+      - "lib/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".npmrc"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moviehub-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: "1"
+      NODE_ENV: production
+      # All catalogue providers are external; no Replit development hostname is needed.
+      EXPO_NO_TELEMETRY: "1"
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile --prod=false
+      - name: Check app types and Expo dependency compatibility
+        working-directory: artifacts/moviehub
+        run: pnpm run typecheck
+      - name: Generate Android project on the build runner
+        working-directory: artifacts/moviehub
+        run: pnpm exec expo prebuild --platform android --no-install
+      - name: Compile standalone universal APK
+        working-directory: artifacts/moviehub/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+      - name: Prepare APK and checksum
+        run: |
+          mkdir -p generated-artifacts/android
+          cp artifacts/moviehub/android/app/build/outputs/apk/release/app-release.apk generated-artifacts/android/Nabees-Moviehub.apk
+          cd generated-artifacts/android
+          sha256sum Nabees-Moviehub.apk > Nabees-Moviehub.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nabees-Moviehub-Android-${{ github.run_number }}
+          path: generated-artifacts/android/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Explain build signing
+        run: |
+          echo '## Nabees Moviehub APK' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Download the APK from this run’s Artifacts section and extract the ZIP.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This is a standalone release-mode evaluation APK using the Expo template debug signing key. It does not require Metro. Configure a private, stable release signing key before public distribution or Play Store submission.' >> "$GITHUB_STEP_SUMMARY"

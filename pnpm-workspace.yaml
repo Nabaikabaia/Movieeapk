@@ -1,0 +1,5 @@
+packages:
+  - artifacts/moviehub
+catalog:
+  '@tanstack/react-query': ^5.83.0
+  zod: ^3.25.76

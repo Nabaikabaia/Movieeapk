@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Nabees Moviehub",
+    "slug": "moviehub",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/images/icon.png",
+    "scheme": "moviehub",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "online.nabees.moviehub",
+      "permissions": ["android.permission.READ_MEDIA_VIDEO"]
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-video",
+      ["expo-media-library", {
+        "photosPermission": "Nabees Moviehub uses your selected video library to play local movies.",
+        "savePhotosPermission": "Nabees Moviehub saves completed downloads to your video library when you choose.",
+        "granularPermissions": ["video"]
+      }]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

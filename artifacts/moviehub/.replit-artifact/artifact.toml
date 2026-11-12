@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "Nabees Moviehub"
+description = "An Android-first movie and live television app with streaming, resumable downloads and a local video library, using the existing Nabees content providers."
+version = "1.0.0"
+id = "artifacts/moviehub"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 24622
+
+[services.development]
+run = "pnpm --filter @workspace/moviehub run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/moviehub", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/moviehub", "run", "serve" ]
+
+[services.env]
+PORT = "24622"
+BASE_PATH = "/"
