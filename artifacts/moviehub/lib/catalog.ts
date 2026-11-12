@@ -1,0 +1,31 @@
+export const MOVIE_CATEGORIES = [
+  { slug: 'top-list', title: 'Top Trending' },
+  { slug: 'popular', title: 'Popular Movies 2025' },
+  { slug: 'new-tv', title: 'New TV Shows' },
+  { slug: 'returning-tv', title: 'Returning TV Shows' },
+  { slug: 'anime', title: 'Anime' },
+  { slug: 'nollywood', title: 'Nollywood' },
+  { slug: 'black-drama', title: 'Black Drama' },
+  { slug: 'k-drama', title: 'K-Drama' },
+  { slug: 'sa-drama', title: 'South African Drama' },
+  { slug: 'bollywood', title: 'Bollywood' },
+  { slug: 'animation', title: 'Animation' },
+  { slug: 'c-drama', title: 'C-Drama' },
+  { slug: 'thai-drama', title: 'Thai Drama' },
+  { slug: 'showmax', title: 'Showmax Originals' },
+  { slug: 'turkish', title: 'Turkish Drama' },
+  { slug: 'indian', title: 'South Indian Movies' },
+] as const;
+
+export const GENRES = [
+  { slug: 'action', label: 'Action', query: 'action' },
+  { slug: 'comedy', label: 'Comedy', query: 'comedy' },
+  { slug: 'horror', label: 'Horror', query: 'horror' },
+  { slug: 'romance', label: 'Romance', query: 'romance' },
+  { slug: 'scifi', label: 'Sci-Fi', query: 'sci-fi' },
+  { slug: 'thriller', label: 'Thriller', query: 'thriller' },
+  { slug: 'kdrama', label: 'K-Drama', query: 'korean drama' },
+  { slug: 'bollywood', label: 'Bollywood', query: 'bollywood' },
+  { slug: 'cartoon', label: 'Animation', query: 'animation' },
+  { slug: 'teen', label: 'Teen', query: 'teen' },
+] as const;

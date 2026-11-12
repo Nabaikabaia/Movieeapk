@@ -9,11 +9,7 @@ export const SUPABASE_PUBLISHABLE_KEY = env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 
 export const NABEES_URL = 'https://spcytnumhpqpiwfwhycx.supabase.co/functions/v1/rapid-function';
 export const SUGGEST_URL = 'https://mumubmrvkqcgzidqubcc.supabase.co/functions/v1/movies/search-suggest';
-export const V1_API_BASE = 'https://raspy-shape-8d99.nabaikabaiaguo.workers.dev/v1';
-export const V2_API_BASE = 'https://movieapi.freesrv.com';
-export const V3_API_BASE = 'https://movie3.nabaikabaiaguo.workers.dev';
 export const SUBTITLES_URL = 'https://movieapi.freesrv.com/moviebox/subtitles';
 export const SPORTS_API = 'https://movieapi.freesrv.com/moviebox/sports';
 export const PLUTO_API = 'https://api.nabeestech.com/pluto';
 export const GLOBETV_API = 'https://movieapi.nabees.online/globetv';
-export const WWE_API_BASE = 'https://wweapi.nabees.online';

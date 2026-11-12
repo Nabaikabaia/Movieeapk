@@ -8,7 +8,7 @@ export default function Search(){
  const q=useQuery({queryKey:['search-results',term],queryFn:()=>findMovies(term),enabled:term.length>1});
  const suggest=useQuery({queryKey:['search-suggest',term],queryFn:()=>getSuggestions(term),enabled:term.length>1,staleTime:90000});
  return <View style={{flex:1,backgroundColor:c.background,paddingTop:60}}>
-  <Text style={{fontFamily:'Syne_700Bold',fontSize:28,color:c.foreground,paddingHorizontal:20,marginBottom:17}}>Search</Text>
+  <Text style={{fontFamily:'Outfit_800ExtraBold',fontSize:28,color:c.foreground,paddingHorizontal:20,marginBottom:17}}>Search</Text>
   <View style={{marginHorizontal:20,backgroundColor:c.card,borderRadius:15,flexDirection:'row',alignItems:'center',paddingHorizontal:14}}>
    <Ionicons name="search" size={19} color={c.mutedForeground}/><TextInput autoFocus value={text} onChangeText={setText} returnKeyType="search" placeholder="Movies, shows, favourites…" placeholderTextColor={c.mutedForeground} style={{flex:1,color:c.foreground,paddingVertical:14,paddingHorizontal:11}} testID="movie-search-input"/>
    {!!text&&<Pressable onPress={()=>setText('')} accessibilityLabel="Clear search"><Ionicons name="close-circle" size={19} color={c.mutedForeground}/></Pressable>}

@@ -21,7 +21,7 @@ export function Rail({title,items,onMovie,action}:{title:string;items:Movie[];on
   const c=useColors();if(!items.length)return null;
   return <View style={{marginTop:26}}>
     <View style={{flexDirection:'row',justifyContent:'space-between',alignItems:'center',paddingHorizontal:20,marginBottom:14}}>
-      <Text style={{fontSize:19,color:c.foreground,fontFamily:'Syne_700Bold'}}>{title}</Text>
+      <Text style={{fontSize:19,color:c.foreground,fontFamily:'Outfit_700Bold'}}>{title}</Text>
       {action&&<Pressable onPress={action}><Text style={{color:c.primary,fontFamily:'Inter_600SemiBold'}}>See all</Text></Pressable>}
     </View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{paddingHorizontal:20}}>{items.map((m,i)=><Poster key={m.subjectId||String(i)} movie={m} onPress={()=>onMovie(m)}/>)}</ScrollView>

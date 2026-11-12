@@ -2,15 +2,12 @@ export const NABEES_API = 'https://spcytnumhpqpiwfwhycx.supabase.co/functions/v1
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXJhYmFzZSIsInJlZiI6Imx1ZWZjdWZmY29qeGNxZG1ybmdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyNzQxNDEsImV4cCI6MjA4MTg1MDE0MX0.AeAsdjzttMtweZZWsYbfzm8D_5Kg5bPDveg8Qytzu5w';
 export const CONTENT_PROVIDERS = [
   { name: 'Nabees movie catalogue', host: 'rapid-function', feature: 'Discover, categories, search, details, recommendations, trailers' },
-  { name: 'Moviebox streams v1', host: 'raspy-shape-8d99.nabaikabaiaguo.workers.dev', feature: 'Alternate movie and series playback sources' },
-  { name: 'Moviebox streams v2', host: 'movieapi.freesrv.com', feature: 'Primary playback and direct-download sources' },
-  { name: 'Moviebox streams v3', host: 'movie3.nabaikabaiaguo.workers.dev', feature: 'Alternate playback and caption sources' },
+  { name: 'Movie API', host: 'movieapi.freesrv.com', feature: 'Single movie and series source for playback and downloads' },
   { name: 'Nabees search suggestions', host: 'mumubmrvkqcgzidqubcc.supabase.co', feature: 'Search suggestions' },
   { name: 'Pluto TV', host: 'api.nabeestech.com/pluto', feature: 'Live channels and verified channel streams' },
   { name: 'IPTV directory', host: 'luefcuffcojxcqdmrngi.supabase.co', feature: 'IPTV channel search, guide metadata, stream links' },
   { name: 'GlobeTV', host: 'movieapi.nabees.online/globetv', feature: 'International channels, countries and categories' },
   { name: 'Sports', host: 'movieapi.freesrv.com/moviebox/sports', feature: 'Live, upcoming and completed matches' },
-  { name: 'WWE', host: 'wweapi.nabees.online', feature: 'WWE channel and video details (upstream may require authorization)' },
   { name: 'Staff filmography', host: 'luefcuffcojxcqdmrngi.supabase.co', feature: 'Related filmography' },
   { name: 'Subtitles', host: 'movieapi.freesrv.com', feature: 'Subtitle lookup for supported streams' },
 ] as const;
@@ -85,16 +82,34 @@ export async function getDetails(idOrPath: string) {
   const d = await catalogue(`/details?detailPath=${encodeURIComponent(path)}`);
   return d;
 }
-export async function getRecommendations(id: string): Promise<Movie[]> {
-  try { const d = await getDetails(id); return (d.you_may_also_like || []).map((m: any) => ({ subjectId: m.subjectId, title: m.title, cover: m.cover, subjectType: m.type || 1, detailPath: m.detailPath, imdbRatingValue: m.imdbRating })); } catch { return []; }
+export async function getRecommendations(id: string, detailData?: any): Promise<Movie[]> {
+  try {
+    const d = detailData || await getDetails(id);
+    const fromDetails = (d.you_may_also_like || d.subject?.you_may_also_like || []).map((m: any) => ({
+      subjectId: m.subjectId,
+      title: m.title,
+      cover: m.cover,
+      subjectType: m.type || 1,
+      detailPath: m.detailPath,
+      imdbRatingValue: m.imdbRating,
+    }));
+    if (fromDetails.length) return fromDetails;
+    const genre = String(d.subject?.genre || '').split(',')[0].trim();
+    if (!genre) return [];
+    return (await findMovies(genre)).filter((movie) => movie.subjectId !== id).slice(0, 16);
+  } catch {
+    return [];
+  }
 }
-export type StreamVersion = 'v1'|'v2'|'v3';
-export async function getStreams(movie: Movie, season = 0, episode = 0, version: StreamVersion = 'v2'): Promise<Stream[]> {
-  const p = new URLSearchParams({ subjectId: String(movie.subjectId), detailPath: movie.detailPath || '', season: String(season), episode: String(episode) });
-  const base = version === 'v1' ? 'https://raspy-shape-8d99.nabaikabaiaguo.workers.dev/v1/movie' : version === 'v3' ? 'https://movie3.nabaikabaiaguo.workers.dev/movie' : 'https://movieapi.freesrv.com/moviebox/sources';
-  if (version === 'v3') { p.set('id', String(movie.subjectId)); p.set('se', String(season)); p.set('ep', String(episode)); }
-  const d = await safe(`${base}?${p}`);
-  const raw = version === 'v3' ? (d.data?.processedSources?.length ? d.data.processedSources : d.data?.downloads || []) : d.data?.streams || d.streams || [];
+export async function getStreams(movie: Movie, season = 0, episode = 0): Promise<Stream[]> {
+  const p = new URLSearchParams({
+    subjectId: String(movie.subjectId),
+    detailPath: String(movie.detailPath || ''),
+    season: String(season),
+    episode: String(episode),
+  });
+  const d = await safe(`https://movieapi.freesrv.com/moviebox/sources?${p}`);
+  const raw = d.data?.streams || d.streams || [];
   return raw.map((x: any, i: number) => ({
     id: String(x.id || `stream-${i}`), url: x.playUrl || x.url || x.proxyUrl || x.stream_url || '',
     proxyUrl: x.playUrl || x.proxyUrl || x.stream_url || x.url || '',
@@ -120,9 +135,6 @@ export async function getGlobeChannels() {
 }
 export async function getSports() {
   const d = await safe('https://movieapi.freesrv.com/moviebox/sports'); return d.matches || {};
-}
-export async function getWwe(page = 1) {
-  const d = await safe(`https://wweapi.nabees.online/channel?c=wwe&p=${page}`); return d.videos || [];
 }
 export async function getIptv(query = '') {
   const p = new URLSearchParams({ resource:'channels', limit:'40', ...(query ? { q:query }: {}) });
