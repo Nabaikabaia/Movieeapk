@@ -227,7 +227,8 @@ export default function Player() {
 
   const { items: downloadItems, start } = useDownloads();
   const isLocal = params.local === '1';
-  const isLive = !!params.kind && params.kind !== 'movie' && params.kind !== 'trailer';
+  const mediaKind = String(params.kind || '').toLowerCase();
+  const isLive = !!params.channelId || ['live', 'sports', 'iptv', 'pluto'].includes(mediaKind);
   const isPartialDownload = params.partial === '1';
   const activeDownload = downloadItems.find((item) => item.id === String(params.downloadId || ''));
   const subtitleOptions = [...new Map(

@@ -23,7 +23,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
-import { getDetails, getRecommendations, getStreams, Movie, Stream } from '@/lib/providers';
+import { AudioOption, getDetails, getRecommendations, getStreams, getSubtitles, Movie, Stream } from '@/lib/providers';
 import { PlaybackOptionsPanel, PlaybackSeason } from '@/components/PlaybackOptionsPanel';
 import { useFavorites } from '@/lib/Favorites';
 import { useDownloads } from '@/lib/Downloads';
@@ -62,7 +62,7 @@ export default function MovieDetails() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, detailPath: requestedDetailPath } = useLocalSearchParams<{ id?: string; detailPath?: string }>();
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   const [isMuted, setIsMuted] = useState(true);
@@ -70,16 +70,42 @@ export default function MovieDetails() {
   const [selectedStreamId, setSelectedStreamId] = useState('');
   const [selectedAudio, setSelectedAudio] = useState('auto');
   const [selectedSubtitle, setSelectedSubtitle] = useState('');
+  const [actionLoading, setActionLoading] = useState<'play' | 'download' | null>(null);
+  const [actionError, setActionError] = useState('');
   const detailsQuery = useQuery({
-    queryKey: ['details', id],
-    queryFn: () => getDetails(String(id)),
-    enabled: !!id,
+    queryKey: ['details', id, requestedDetailPath],
+    queryFn: () => getDetails(String(requestedDetailPath || id)),
+    enabled: !!(requestedDetailPath || id),
     staleTime: 300_000,
   });
   const details = detailsQuery.data;
   const subject = details?.subject as Movie | undefined;
   const title = subject?.title || 'Movie details';
   const isSeries = subject?.subjectType === 2;
+  const detailPath = String(subject?.detailPath || requestedDetailPath || id || '');
+  const rawDubs = subject?.dubs?.length ? subject.dubs : details?.dubs || [];
+  const audioDubs = useMemo<AudioOption[]>(() => (Array.isArray(rawDubs) ? rawDubs : [])
+    .map((dub: any) => {
+      const sourceSubjectId = String(dub.subjectId || dub.subject_id || '');
+      const sourceDetailPath = String(dub.detailPath || dub.detail_path || '');
+      const language = String(dub.lanName || dub.language || dub.lanCode || 'Audio dub');
+      const isOriginal = !!dub.original;
+      return {
+        id: `dub:${sourceSubjectId}`,
+        language,
+        code: String(dub.lanCode || dub.languageCode || ''),
+        label: `${language}${isOriginal ? ' · Original' : ''}`,
+        kind: 'dub' as const,
+        sourceSubjectId,
+        sourceDetailPath,
+        isOriginal,
+      };
+    })
+    .filter((dub) => !!dub.sourceSubjectId && !!dub.sourceDetailPath), [subject?.dubs, details?.dubs]);
+  const selectedDub = audioDubs.find((track) => track.id === selectedAudio);
+  const playbackSubject = subject && selectedDub
+    ? { ...subject, subjectId: selectedDub.sourceSubjectId!, detailPath: selectedDub.sourceDetailPath! }
+    : subject;
   const sourceSeason = isSeries ? season : 0;
   const sourceEpisode = isSeries ? episode : 0;
   const trailerUrl = subject?.trailer?.videoAddress?.url;
@@ -87,13 +113,14 @@ export default function MovieDetails() {
   const { items: favorites, toggle } = useFavorites();
   const { start: startDownload } = useDownloads();
   const isFavorite = favorites.some((item) => item.subjectId === subject?.subjectId);
-  const detailPath = String(subject?.detailPath || id || '');
   const sourceQuery = useQuery({
-    queryKey: ['movie-api-source', subject?.subjectId, detailPath, sourceSeason, sourceEpisode],
-    queryFn: () => getStreams(subject!, sourceSeason, sourceEpisode),
-    enabled: !!subject?.subjectId && !!subject?.detailPath,
-    staleTime: 240_000,
-    retry: false,
+    queryKey: ['movie-api-source', playbackSubject?.subjectId, playbackSubject?.detailPath, sourceSeason, sourceEpisode],
+    queryFn: () => getStreams(playbackSubject!, sourceSeason, sourceEpisode),
+    enabled: !!playbackSubject?.subjectId && !!playbackSubject?.detailPath,
+    staleTime: 0,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
   const recommendationsQuery = useQuery({
     queryKey: ['recommendations', subject?.subjectId],
@@ -106,8 +133,21 @@ export default function MovieDetails() {
   const activeSeason = playbackSeasons.find((item) => item.number === season);
   const streams = sourceQuery.data || [];
   const selectedStream = streams.find((stream) => stream.id === selectedStreamId) || streams[0];
-  const audioTracks = [...new Map(streams.flatMap((stream) => stream.audioTracks).map((track) => [track.id || track.code || track.label, track])).values()];
-  const subtitles = selectedStream?.subtitles || [];
+  const subtitleQuery = useQuery({
+    queryKey: ['movie-api-subtitles', playbackSubject?.subjectId, playbackSubject?.detailPath, sourceSeason, sourceEpisode, selectedStream?.id],
+    queryFn: () => selectedStream?.subtitles.length
+      ? Promise.resolve(selectedStream.subtitles)
+      : getSubtitles(playbackSubject!, selectedStream!, sourceSeason, sourceEpisode),
+    enabled: !!playbackSubject?.subjectId && !!selectedStream?.id,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const embeddedAudioTracks = useMemo(
+    () => [...new Map(streams.flatMap((stream) => stream.audioTracks).map((track) => [track.id || track.code || track.label, track])).values()],
+    [streams],
+  );
+  const audioTracks = useMemo(() => [...audioDubs, ...embeddedAudioTracks], [audioDubs, embeddedAudioTracks]);
+  const subtitles = selectedStream?.subtitles.length ? selectedStream.subtitles : subtitleQuery.data || [];
 
   useEffect(() => {
     if (playbackSeasons.length && !playbackSeasons.some((item) => item.number === season)) {
@@ -150,37 +190,80 @@ export default function MovieDetails() {
     }, [trailerPlayer, trailerUrl, isMuted]),
   );
 
-  const openPlayer = (stream?: Stream) => {
-    if (!subject) return;
-    const url = stream?.url || stream?.proxyUrl;
-    const subtitle = stream?.subtitles.find((item) => item.url === selectedSubtitle);
-    const params = {
-      title,
-      id: String(subject.subjectId),
-      detailPath,
-      season: String(sourceSeason),
-      episode: String(sourceEpisode),
-      kind: 'movie',
-      subjectType: String(subject.subjectType || 1),
-      audio: selectedAudio,
-      subtitleUrl: selectedSubtitle,
-      subtitleLanguage: subtitle?.language || '',
-    };
-    if (url) {
+  const refreshSelectedStream = async (requested?: Stream): Promise<Stream> => {
+    const result = await sourceQuery.refetch();
+    if (result.isError) {
+      throw result.error instanceof Error ? result.error : new Error('The Movie API could not refresh this stream.');
+    }
+    const freshStreams = result.data || [];
+    const selected = freshStreams.find((stream) => stream.id === (requested || selectedStream)?.id)
+      || freshStreams.find((stream) => stream.quality === (requested || selectedStream)?.quality)
+      || freshStreams[0];
+    if (!selected?.url) throw new Error('No playable source is available for this title, episode, and audio selection.');
+    setSelectedStreamId(selected.id);
+    return selected;
+  };
+
+  const openPlayer = async (requested?: Stream) => {
+    if (!subject || actionLoading) return;
+    setActionLoading('play');
+    setActionError('');
+    try {
+      const stream = await refreshSelectedStream(requested);
+      const audioChoice = audioTracks.find((track) => track.id === selectedAudio || track.code === selectedAudio);
+      const oldSubtitle = subtitles.find((item) => item.url === selectedSubtitle);
+      const playerSubject = playbackSubject || subject;
+      let freshSubtitleOptions = stream.subtitles;
+      if (selectedSubtitle && !freshSubtitleOptions.some((item) => item.url === selectedSubtitle)) {
+        freshSubtitleOptions = await getSubtitles(playerSubject, stream, sourceSeason, sourceEpisode);
+      }
+      const freshSubtitle = freshSubtitleOptions.find((item) => item.url === selectedSubtitle)
+        || freshSubtitleOptions.find((item) => item.code === oldSubtitle?.code || item.language === oldSubtitle?.language)
+        || oldSubtitle;
       router.push({
         pathname: '/player',
-        params: { ...params, url },
+        params: {
+          title,
+          id: String(playerSubject.subjectId),
+          detailPath: String(playerSubject.detailPath || detailPath),
+          season: String(sourceSeason),
+          episode: String(sourceEpisode),
+          kind: isSeries ? 'series' : 'movie',
+          subjectType: String(subject.subjectType || 1),
+          quality: stream.quality,
+          audio: audioChoice?.kind === 'embedded' ? selectedAudio : 'auto',
+          subtitleUrl: freshSubtitle?.url || '',
+          subtitleLanguage: freshSubtitle?.language || '',
+          url: stream.url,
+        },
       });
-      return;
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'The Movie API could not load this stream.');
+    } finally {
+      setActionLoading(null);
     }
-    router.push({
-      pathname: '/player',
-      params,
-    });
+  };
+
+  const downloadSelected = async () => {
+    if (!subject || actionLoading) return;
+    setActionLoading('download');
+    setActionError('');
+    try {
+      const stream = await refreshSelectedStream();
+      const downloadUrl = stream.downloadUrl || stream.proxyUrl || stream.url;
+      if (!downloadUrl) throw new Error('This source does not provide a downloadable file.');
+      const suffix = isSeries ? ` S${season} E${episode}` : '';
+      const languageSuffix = selectedDub ? ` · ${selectedDub.language}` : '';
+      await startDownload(`${title}${suffix}${languageSuffix} · ${stream.quality}p`, downloadUrl);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'The Movie API could not prepare this download.');
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const openRecommendation = (movie: Movie) => {
-    router.push({ pathname: '/movie', params: { id: String(movie.subjectId) } });
+    router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } });
   };
 
   const actors = (details?.stars || []).filter((person: any) => person.staffType === 1);
@@ -217,7 +300,7 @@ export default function MovieDetails() {
     );
   }
 
-  const playSelected = () => openPlayer(selectedStream);
+  const playSelected = () => { void openPlayer(selectedStream); };
 
   return (
     <ScrollView
@@ -321,8 +404,9 @@ export default function MovieDetails() {
           onEpisodeChange={setEpisode}
           streams={streams}
           loading={sourceQuery.isFetching}
-          error={sourceQuery.isError ? sourceQuery.error.message : undefined}
-          onRetry={() => void sourceQuery.refetch()}
+          error={actionError || (sourceQuery.isError ? sourceQuery.error.message : undefined)}
+          onRetry={() => { setActionError(''); void sourceQuery.refetch(); }}
+          actionLoading={actionLoading}
           selectedStreamId={selectedStreamId}
           onStreamChange={setSelectedStreamId}
           selectedAudio={selectedAudio}
@@ -330,13 +414,10 @@ export default function MovieDetails() {
           onAudioChange={setSelectedAudio}
           selectedSubtitle={selectedSubtitle}
           subtitles={subtitles}
+          subtitlesLoading={subtitleQuery.isFetching && !subtitles.length}
           onSubtitleChange={setSelectedSubtitle}
           onPlay={playSelected}
-          onDownload={() => {
-            if (!selectedStream) return;
-            const suffix = isSeries ? ` S${season} E${episode}` : '';
-            void startDownload(`${title}${suffix}`, selectedStream.downloadUrl);
-          }}
+          onDownload={() => { void downloadSelected(); }}
         />
       ) : null}
 

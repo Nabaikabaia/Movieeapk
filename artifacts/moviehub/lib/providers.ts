@@ -23,6 +23,16 @@ export type Movie = {
   imdbRatingValue?: string;
   [key: string]: any;
 };
+export type AudioOption = {
+  id: string;
+  language: string;
+  code: string;
+  label: string;
+  kind?: 'dub' | 'embedded';
+  sourceSubjectId?: string;
+  sourceDetailPath?: string;
+  isOriginal?: boolean;
+};
 export type Stream = {
   id: string;
   url: string;
@@ -31,12 +41,12 @@ export type Stream = {
   quality: string;
   size: string;
   format: string;
-  audioTracks: { id: string; language: string; code: string; label: string }[];
+  audioTracks: AudioOption[];
   subtitles: { language: string; code: string; url: string }[];
 };
-const safe = async (url: string, init?: RequestInit) => {
+const safe = async (url: string, init?: RequestInit, timeout = 16000) => {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 16000);
+  const timer = setTimeout(() => controller.abort(), timeout);
   const abort = () => controller.abort();
   init?.signal?.addEventListener('abort', abort, { once: true });
   try {
@@ -87,7 +97,11 @@ export async function getDetails(idOrPath: string) {
   if (/^\d+$/.test(path)) {
     const d = await safe(`${NABEES_API}/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keyword: path, page: 1, perPage: 5, subjectType: 0 }) });
     const items = d.data?.items || [];
-    path = (items.find((x: any) => String(x.subjectId) === path) || items[0])?.detailPath || path;
+    const exactMatch = items.find((x: any) => String(x.subjectId) === path);
+    if (!exactMatch?.detailPath) {
+      throw new Error('Could not resolve this title to an exact details page.');
+    }
+    path = exactMatch.detailPath;
   }
   const d = await catalogue(`/details?detailPath=${encodeURIComponent(path)}`);
   return d;
@@ -136,6 +150,7 @@ export async function getStreams(movie: Movie, season = 0, episode = 0): Promise
         language: String(track.language || track.lang || track.languageCode || ''),
         code: String(track.code || track.languageCode || track.language || track.lang || ''),
         label: String(track.label || track.name || track.title || track.language_name || track.language || `Audio ${trackIndex + 1}`),
+        kind: 'embedded' as const,
       })),
       subtitles: (Array.isArray(rawSubtitles) ? rawSubtitles : []).filter((subtitle: any) => subtitle.url || subtitle.file || subtitle.src).map((subtitle: any) => ({
         language: String(subtitle.language_name || subtitle.lanName || subtitle.language || subtitle.lan || subtitle.label || 'Subtitle'),
@@ -144,6 +159,41 @@ export async function getStreams(movie: Movie, season = 0, episode = 0): Promise
       })),
     };
   }).filter((stream: Stream) => !!stream.url);
+}
+export async function getSubtitles(movie: Movie, stream: Stream, season = 0, episode = 0): Promise<Stream['subtitles']> {
+  const params = new URLSearchParams({
+    streamId: String(stream.id),
+    subjectId: String(movie.subjectId),
+    detailPath: String(movie.detailPath || ''),
+    format: String(stream.format || 'MP4'),
+    season: String(season),
+    episode: String(episode),
+  });
+  try {
+    const payload = await safe(`https://movieapi.freesrv.com/moviebox/subtitles?${params}`, undefined, 8_000);
+    const candidates = [
+      payload.data?.subtitles, payload.subtitles,
+      payload.data?.tracks, payload.tracks,
+      payload.data?.captions, payload.captions,
+      payload.data?.items, payload.items, payload.data,
+    ];
+    const tracks = candidates.find(Array.isArray) || [];
+    return tracks.flatMap((track: any) => {
+      const languageValue = track.language;
+      const code = String(
+        track.languageCode || track.lan || track.lang || track.code || track.srclang ||
+        (typeof languageValue === 'string' ? languageValue : languageValue?.code) || '',
+      );
+      const language = String(
+        track.languageName || track.lanName || track.language_name || track.name || track.label ||
+        (typeof languageValue === 'string' ? languageValue : languageValue?.name) || code || 'Subtitle',
+      );
+      const url = String(track.url || track.subtitleUrl || track.subtitle_url || track.fileUrl || track.src || '');
+      return url ? [{ language, code, url }] : [];
+    });
+  } catch {
+    return [];
+  }
 }
 export async function getPluto() {
   const d = await safe('https://api.nabeestech.com/pluto/channels');

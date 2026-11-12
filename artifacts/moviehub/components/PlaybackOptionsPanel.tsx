@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
-import type { Stream } from '@/lib/providers';
+import type { AudioOption, Stream } from '@/lib/providers';
 import { InlineLoader } from '@/lib/ui';
 
 export type PlaybackSeason = {
@@ -28,13 +28,15 @@ type Props = {
   selectedStreamId: string;
   onStreamChange: (streamId: string) => void;
   selectedAudio: string;
-  audioTracks: Stream['audioTracks'];
+  audioTracks: AudioOption[];
   onAudioChange: (audio: string) => void;
   selectedSubtitle: string;
   subtitles: Stream['subtitles'];
+  subtitlesLoading?: boolean;
   onSubtitleChange: (subtitleUrl: string) => void;
   onPlay: () => void;
   onDownload: () => void;
+  actionLoading?: 'play' | 'download' | null;
 };
 
 function DropdownTrigger({
@@ -164,10 +166,11 @@ export function PlaybackOptionsPanel(props: Props) {
           {openMenu === 'subtitle' ? (
             <View style={{ marginTop: 8, padding: 7, borderRadius: 16, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }}>
               <Choice label="Off" detail="Play without captions" selected={!props.selectedSubtitle} onPress={() => { props.onSubtitleChange(''); setOpenMenu(null); }} />
+              {props.subtitlesLoading ? <Text style={{ color: colors.mutedForeground, fontSize: 11, paddingHorizontal: 11, paddingVertical: 8 }}>Loading subtitle choices…</Text> : null}
               {props.subtitles.map((subtitle) => (
                 <Choice key={`${subtitle.code}-${subtitle.url}`} label={subtitle.language} detail={subtitle.code || 'Subtitle file'} selected={props.selectedSubtitle === subtitle.url} onPress={() => { props.onSubtitleChange(subtitle.url); setOpenMenu(null); }} />
               ))}
-              {!props.subtitles.length ? <Text style={{ color: colors.mutedForeground, fontSize: 11, lineHeight: 17, paddingHorizontal: 11, paddingVertical: 8 }}>No subtitle tracks were supplied for this selection.</Text> : null}
+              {!props.subtitlesLoading && !props.subtitles.length ? <Text style={{ color: colors.mutedForeground, fontSize: 11, lineHeight: 17, paddingHorizontal: 11, paddingVertical: 8 }}>No subtitle tracks were supplied for this selection.</Text> : null}
             </View>
           ) : null}
 
@@ -263,21 +266,23 @@ export function PlaybackOptionsPanel(props: Props) {
           <View style={{ flexDirection: 'row', gap: 9, marginTop: 16 }}>
             <Pressable
               onPress={props.onPlay}
-              disabled={!activeStream}
+              disabled={!activeStream || !!props.actionLoading}
               testID="play-selected-stream"
               style={{ flex: 1, minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 16, backgroundColor: activeStream ? colors.primary : colors.secondary, opacity: activeStream ? 1 : 0.6 }}
             >
-              <Ionicons name="play" size={17} color={colors.primaryForeground} />
-              <Text style={{ color: colors.primaryForeground, fontFamily: 'Outfit_700Bold', fontSize: 13 }}>Play {selectedQuality}</Text>
+              <Ionicons name={props.actionLoading === 'play' ? 'refresh' : 'play'} size={17} color={colors.primaryForeground} />
+              <Text style={{ color: colors.primaryForeground, fontFamily: 'Outfit_700Bold', fontSize: 13 }}>
+                {props.actionLoading === 'play' ? 'Refreshing link…' : `Play ${selectedQuality}`}
+              </Text>
             </Pressable>
             <Pressable
               onPress={props.onDownload}
-              disabled={!activeStream}
+              disabled={!activeStream || !!props.actionLoading}
               accessibilityLabel="Download selected resolution"
               testID="download-selected-stream"
               style={{ width: 49, minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border, opacity: activeStream ? 1 : 0.5 }}
             >
-              <Ionicons name="download-outline" size={19} color={colors.foreground} />
+              <Ionicons name={props.actionLoading === 'download' ? 'refresh' : 'download-outline'} size={19} color={colors.foreground} />
             </Pressable>
           </View>
         </View>

@@ -55,7 +55,7 @@ export default function Search() {
   };
   const openMovie = (movie: Movie) => {
     Keyboard.dismiss();
-    router.push({ pathname: '/movie', params: { id: String(movie.subjectId) } });
+    router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } });
   };
 
   const showResults = term.length > 1;

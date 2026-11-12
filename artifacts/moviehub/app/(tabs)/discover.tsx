@@ -137,7 +137,7 @@ export default function Discover() {
               key={movie.subjectId}
               movie={movie}
               width={(width - 54) / 2.45}
-              onPress={() => router.push({ pathname: '/movie', params: { id: String(movie.subjectId) } })}
+              onPress={() => router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } })}
             />
           ))}
         </View>

@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import {
   Pressable,
+  Platform,
   RefreshControl,
   ScrollView,
   Text,
@@ -79,7 +80,7 @@ export default function Home() {
   const allCatalogRequestsFailed = activeQueries.length > 0 && activeQueries.every((query) => query.isError);
   const refreshCatalog = () => Promise.all(categoryQueries.slice(0, activeCategoryCount).map((query) => query.refetch()));
   const openMovie = (movie: Movie) =>
-    router.push({ pathname: '/movie', params: { id: String(movie.subjectId) } });
+    router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } });
   const openGenre = (slug: string) =>
     router.push({ pathname: '/(tabs)/discover', params: { genre: slug } } as any);
   const openCategory = (slug: string) =>
@@ -161,88 +162,182 @@ export default function Home() {
       ) : null}
 
       {hero && (
-        <Animated.View key={String(hero.subjectId)} entering={FadeInDown.duration(500)} style={{ marginHorizontal: 14, height: 500, borderRadius: 26, overflow: 'hidden', backgroundColor: colors.card }}>
-          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-            <Image
-              source={{ uri: hero.cover?.url || hero.coverUrl || hero.poster || '' }}
-              contentFit="cover"
-              cachePolicy="disk"
-              transition={360}
-              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-            />
-            <LinearGradient
-              colors={['rgba(8,9,11,.02)', 'rgba(8,9,11,.32)', 'rgba(8,9,11,.98)']}
-              locations={[0, 0.46, 1]}
-              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-            />
-            <View style={{ position: 'absolute', top: 18, right: 18, flexDirection: 'row', gap: 6 }}>
-              {heroSlides.slice(0, 6).map((slide, index) => (
+        <View style={{ marginTop: 2, marginBottom: 5 }}>
+          <View style={{ height: 390, marginHorizontal: 14, overflow: 'hidden', position: 'relative' }}>
+            {heroSlides.length > 1 && [1, -1].map((offset) => {
+              const index = (carouselIndex + offset + heroSlides.length) % heroSlides.length;
+              const movie = heroSlides[index];
+              const isLeft = offset === -1;
+              return (
+                <Animated.View
+                  key={`${isLeft ? 'left' : 'right'}-${movie.subjectId}`}
+                  entering={FadeInDown.duration(420)}
+                  style={{
+                    position: 'absolute',
+                    left: isLeft ? '-38%' : '79%',
+                    top: 12,
+                    width: '59%',
+                    height: 352,
+                    zIndex: 1,
+                  }}
+                >
+                  <Animated.View
+                    style={{
+                      flex: 1,
+                    borderRadius: 23,
+                    overflow: 'hidden',
+                    backgroundColor: colors.card,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    opacity: 0.74,
+                    transform: Platform.OS === 'web'
+                      ? [{ rotate: isLeft ? '-7deg' : '7deg' }, { scale: 0.86 }]
+                      : [{ perspective: 900 }, { rotateY: isLeft ? '17deg' : '-17deg' }, { rotate: isLeft ? '-5deg' : '5deg' }, { scale: 0.86 }],
+                  }}
+                  >
+                  <Pressable
+                    onPress={() => setCarouselIndex(index)}
+                    accessibilityLabel={`Show ${movie.title}`}
+                    style={{ flex: 1 }}
+                  >
+                    <Image
+                      source={{ uri: movie.cover?.url || movie.coverUrl || movie.poster || '' }}
+                      contentFit="cover"
+                      cachePolicy="disk"
+                      transition={300}
+                      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+                    />
+                    <LinearGradient
+                      colors={['rgba(8,9,11,.04)', 'rgba(8,9,11,.9)']}
+                      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+                    />
+                    <View style={{ position: 'absolute', left: 12, right: 12, bottom: 17 }}>
+                      <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,.72)', fontSize: 9, letterSpacing: 1.7, fontFamily: 'Outfit_700Bold', marginBottom: 5 }}>
+                        {isLeft ? 'PREVIOUS' : 'UP NEXT'}
+                      </Text>
+                      <Text numberOfLines={2} style={{ color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 14, lineHeight: 17 }}>
+                        {movie.title}
+                      </Text>
+                    </View>
+                  </Pressable>
+                  </Animated.View>
+                </Animated.View>
+              );
+            })}
+
+            <Animated.View
+              key={String(hero.subjectId)}
+              entering={FadeInDown.duration(500)}
+              style={{
+                position: 'absolute',
+                left: '16%',
+                top: 0,
+                width: '68%',
+                height: 378,
+                zIndex: 2,
+                borderRadius: 25,
+                overflow: 'hidden',
+                backgroundColor: colors.card,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,.32)',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 15 },
+                shadowOpacity: 0.42,
+                shadowRadius: 20,
+                elevation: 12,
+              }}
+            >
+              <Image
+                source={{ uri: hero.cover?.url || hero.coverUrl || hero.poster || '' }}
+                contentFit="cover"
+                cachePolicy="disk"
+                transition={360}
+                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+              />
+              <LinearGradient
+                colors={['rgba(8,9,11,.06)', 'rgba(8,9,11,.08)', 'rgba(8,9,11,.96)']}
+                locations={[0, 0.38, 1]}
+                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+              />
+              <View style={{ position: 'absolute', top: 16, left: 15, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                <View style={{ backgroundColor: colors.primary, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 5 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontFamily: 'Outfit_700Bold', letterSpacing: 1.2 }}>FEATURED</Text>
+                </View>
+                <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 11 }}>
+                  {hero.imdbRatingValue || hero.rating || 'NEW'}
+                </Text>
+              </View>
+
+              <View style={{ position: 'absolute', left: 16, right: 15, bottom: 17 }}>
+                <Text numberOfLines={2} style={{ fontFamily: 'Outfit_800ExtraBold', fontSize: 27, lineHeight: 31, color: '#fff' }}>
+                  {hero.title}
+                </Text>
+                <Text numberOfLines={2} style={{ fontSize: 11, lineHeight: 16, color: 'rgba(255,255,255,.76)', marginTop: 6 }}>
+                  {hero.description || hero.releaseDate?.slice(0, 4) || 'A story worth staying in for.'}
+                </Text>
                 <Pressable
-                  key={String(slide.subjectId)}
-                  onPress={() => setCarouselIndex(index)}
-                  accessibilityLabel={`Show featured title ${index + 1}`}
-                  style={{ width: index === carouselIndex % heroSlides.length ? 22 : 6, height: 6, borderRadius: 5, backgroundColor: index === carouselIndex % heroSlides.length ? colors.primary : 'rgba(255,255,255,.55)' }}
-                />
-              ))}
-            </View>
+                  onPress={() => openMovie(hero)}
+                  testID="hero-play"
+                  accessibilityLabel={`Explore ${hero.title}`}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    alignSelf: 'flex-start',
+                    gap: 7,
+                    backgroundColor: '#fff',
+                    borderRadius: 22,
+                    paddingVertical: 10,
+                    paddingHorizontal: 15,
+                    marginTop: 12,
+                  }}
+                >
+                  <Ionicons name="play" size={15} color="#101114" />
+                  <Text style={{ color: '#101114', fontFamily: 'Outfit_700Bold', fontSize: 12 }}>Explore title</Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+
             {heroSlides.length > 1 ? (
               <>
                 <Pressable
                   onPress={() => setCarouselIndex((index) => (index - 1 + heroSlides.length) % heroSlides.length)}
                   accessibilityLabel="Previous featured title"
                   testID="hero-previous"
-                  style={{ position: 'absolute', left: 12, top: '30%', width: 40, height: 40, borderRadius: 22, backgroundColor: 'rgba(8,9,11,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.22)', alignItems: 'center', justifyContent: 'center', zIndex: 3 }}
+                  style={{ position: 'absolute', left: 5, top: '43%', width: 38, height: 38, borderRadius: 21, backgroundColor: 'rgba(8,9,11,.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,.26)', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}
                 >
-                  <Ionicons name="chevron-back" size={20} color="#fff" />
+                  <Ionicons name="chevron-back" size={19} color="#fff" />
                 </Pressable>
                 <Pressable
                   onPress={() => setCarouselIndex((index) => (index + 1) % heroSlides.length)}
                   accessibilityLabel="Next featured title"
                   testID="hero-next"
-                  style={{ position: 'absolute', right: 12, top: '30%', width: 40, height: 40, borderRadius: 22, backgroundColor: 'rgba(8,9,11,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.22)', alignItems: 'center', justifyContent: 'center', zIndex: 3 }}
+                  style={{ position: 'absolute', right: 5, top: '43%', width: 38, height: 38, borderRadius: 21, backgroundColor: 'rgba(8,9,11,.72)', borderWidth: 1, borderColor: 'rgba(255,255,255,.26)', alignItems: 'center', justifyContent: 'center', zIndex: 5 }}
                 >
-                  <Ionicons name="chevron-forward" size={20} color="#fff" />
+                  <Ionicons name="chevron-forward" size={19} color="#fff" />
                 </Pressable>
               </>
             ) : null}
-            <View style={{ padding: 22, paddingBottom: 24 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <View style={{ backgroundColor: colors.primary, borderRadius: 5, paddingHorizontal: 9, paddingVertical: 5 }}>
-                  <Text style={{ color: '#fff', fontSize: 10, fontFamily: 'Outfit_700Bold', letterSpacing: 1.1 }}>
-                    FEATURED
-                  </Text>
-                </View>
-                <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>
-                  ★ {hero.imdbRatingValue || hero.rating || 'NEW'}
-                </Text>
-              </View>
-              <Text numberOfLines={3} style={{ fontFamily: 'Outfit_800ExtraBold', fontSize: 34, lineHeight: 39, color: '#fff' }}>
-                {hero.title}
-              </Text>
-              <Text numberOfLines={2} style={{ fontSize: 13, lineHeight: 20, color: 'rgba(255,255,255,.74)', marginTop: 9 }}>
-                {hero.description || hero.releaseDate?.slice(0, 4) || 'Find your next favorite'}
-              </Text>
-              <Pressable
-                onPress={() => openMovie(hero)}
-                testID="hero-play"
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  alignSelf: 'flex-start',
-                  gap: 8,
-                  backgroundColor: '#fff',
-                  borderRadius: 24,
-                  paddingVertical: 12,
-                  paddingHorizontal: 18,
-                  marginTop: 18,
-                }}
-              >
-                <Ionicons name="play" size={17} color="#101114" />
-                <Text style={{ color: '#101114', fontFamily: 'Outfit_700Bold' }}>Explore title</Text>
-              </Pressable>
-            </View>
           </View>
-        </Animated.View>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 3 }}>
+            {heroSlides.slice(0, 6).map((slide, index) => (
+              <Pressable
+                key={String(slide.subjectId)}
+                onPress={() => setCarouselIndex(index)}
+                accessibilityLabel={`Show featured title ${index + 1}`}
+                style={{
+                  width: index === carouselIndex % heroSlides.length ? 22 : 5,
+                  height: 5,
+                  borderRadius: 4,
+                  backgroundColor: index === carouselIndex % heroSlides.length ? colors.primary : colors.mutedForeground,
+                }}
+              />
+            ))}
+            <Text style={{ marginLeft: 6, color: colors.mutedForeground, fontSize: 9, letterSpacing: 1.4, fontFamily: 'Outfit_600SemiBold' }}>
+              {String((carouselIndex % heroSlides.length) + 1).padStart(2, '0')} / {String(heroSlides.length).padStart(2, '0')}
+            </Text>
+          </View>
+        </View>
       )}
 
       <Animated.View entering={FadeInDown.delay(100).duration(480)}>
