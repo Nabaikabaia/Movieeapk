@@ -2,16 +2,19 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useKeepAwake } from 'expo-keep-awake';
-import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
 import { getStreams, Movie, verifyPluto } from '@/lib/providers';
 import { useDownloads } from '@/lib/Downloads';
@@ -31,22 +34,33 @@ function formatTime(seconds: number) {
     : `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
 
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 function BufferMark() {
   const pulse = useSharedValue(0.35);
   useEffect(() => {
     pulse.value = withRepeat(withTiming(1, { duration: 780 }), -1, true);
   }, [pulse]);
-  const motion = useAnimatedStyle(() => ({ opacity: pulse.value, transform: [{ scale: 0.92 + pulse.value * 0.12 }] }));
+  const motion = useAnimatedStyle(() => ({ opacity: 0.3 + pulse.value * 0.55, transform: [{ scale: 0.86 + pulse.value * 0.2 }] }));
   return (
-    <Animated.View style={[motion, { width: 60, height: 60, borderRadius: 32, backgroundColor: 'rgba(12,12,14,.68)', borderWidth: 1, borderColor: 'rgba(255,255,255,.17)', alignItems: 'center', justifyContent: 'center' }]}>
-      <Ionicons name="play" color="#fff" size={23} />
-    </Animated.View>
+    <View style={{ width: 70, height: 70, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={[motion, { position: 'absolute', width: 66, height: 66, borderRadius: 35, borderWidth: 1, borderColor: 'rgba(228,17,17,.72)', backgroundColor: 'rgba(228,17,17,.08)' }]} />
+      <View style={{ width: 49, height: 49, borderRadius: 26, backgroundColor: 'rgba(18,19,22,.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,.2)', alignItems: 'center', justifyContent: 'center' }}>
+        <Ionicons name="film-outline" color="#fff" size={21} />
+      </View>
+    </View>
   );
 }
 
 export default function Player() {
   const colors = useColors();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     title?: string;
     url?: string;
@@ -55,10 +69,13 @@ export default function Player() {
     season?: string;
     episode?: string;
     subjectType?: string;
+    quality?: string;
     audio?: string;
     subtitleUrl?: string;
     subtitleLanguage?: string;
     local?: string;
+    partial?: string;
+    downloadId?: string;
     channelId?: string;
     kind?: string;
   }>();
@@ -72,13 +89,17 @@ export default function Player() {
   const [bufferedTime, setBufferedTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState(1);
+  const [volume, setVolume] = useState(1);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedQuality, setSelectedQuality] = useState(String(params.quality || ''));
+  const [subtitleUrl, setSubtitleUrl] = useState(String(params.subtitleUrl || ''));
+  const [subtitleLanguage, setSubtitleLanguage] = useState(String(params.subtitleLanguage || ''));
   const [trackWidth, setTrackWidth] = useState(1);
   const [captions, setCaptions] = useState<CaptionCue[]>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
   const [audioTracks, setAudioTracks] = useState<any[]>([]);
-  const [audioMenuOpen, setAudioMenuOpen] = useState(false);
-  const [activeAudioId, setActiveAudioId] = useState('auto');
+  const [activeAudioId, setActiveAudioId] = useState(String(params.audio || 'auto'));
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const videoViewRef = useRef<VideoView>(null);
 
@@ -96,13 +117,22 @@ export default function Player() {
       if (!sources.length) throw new Error('This title currently has no available playback sources.');
       return sources;
     },
-    enabled: !url && !!params.id,
+    enabled: !!params.id,
     retry: 1,
   });
 
   useEffect(() => {
-    if (!url && sourceQuery.data?.length) setUrl(sourceQuery.data[0].url);
-  }, [url, sourceQuery.data]);
+    if (!sourceQuery.data?.length) return;
+    if (url) {
+      const current = sourceQuery.data.find((stream) => stream.url === url);
+      if (current && !selectedQuality) setSelectedQuality(current.quality);
+      return;
+    }
+    const requestedQuality = Number(String(params.quality || '').replace(/[^\d]/g, ''));
+    const preferred = sourceQuery.data.find((stream) => Number(stream.quality) === requestedQuality) || sourceQuery.data[0];
+    setUrl(preferred.url);
+    setSelectedQuality(preferred.quality);
+  }, [url, sourceQuery.data, params.quality, selectedQuality]);
 
   useEffect(() => {
     if (!params.channelId || params.url) return undefined;
@@ -145,10 +175,11 @@ export default function Player() {
     };
   }, [player]);
 
-  const requestedAudio = String(params.audio || '');
-  const subtitleUrl = String(params.subtitleUrl || '');
-  const subtitleLanguage = String(params.subtitleLanguage || '');
+  useEffect(() => {
+    player.volume = volume;
+  }, [player, volume]);
 
+  const requestedAudio = String(params.audio || '');
   useEffect(() => {
     if (!subtitleUrl) {
       setCaptions([]);
@@ -189,19 +220,33 @@ export default function Player() {
 
   useEffect(() => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    if (!controlsVisible || !playing) return undefined;
-    hideTimer.current = setTimeout(() => setControlsVisible(false), 5000);
+    if (!controlsVisible || !playing || settingsOpen) return undefined;
+    hideTimer.current = setTimeout(() => setControlsVisible(false), 3500);
     return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
-  }, [controlsVisible, playing]);
+  }, [controlsVisible, playing, settingsOpen]);
 
-  const { start } = useDownloads();
+  const { items: downloadItems, start } = useDownloads();
   const isLocal = params.local === '1';
   const isLive = !!params.kind && params.kind !== 'movie' && params.kind !== 'trailer';
+  const isPartialDownload = params.partial === '1';
+  const activeDownload = downloadItems.find((item) => item.id === String(params.downloadId || ''));
+  const subtitleOptions = [...new Map(
+    (sourceQuery.data || []).flatMap((stream) => stream.subtitles || []).map((subtitle) => [subtitle.url, subtitle]),
+  ).values()];
   const progress = duration > 0 && Number.isFinite(duration) ? Math.min(1, currentTime / duration) : 0;
   const bufferedProgress = duration > 0 && Number.isFinite(duration) ? Math.min(1, bufferedTime / duration) : 0;
   const isBuffering = !!url && (playerStatus === 'loading' || playerStatus === 'idle') && !failure;
   const activeCaption = captions.find((cue) => currentTime >= cue.start && currentTime <= cue.end)?.text;
-  const currentAudio = audioTracks.find((track) => String(track.id || track.label || track.language) === activeAudioId);
+  const partialStatus = isPartialDownload
+    ? activeDownload?.state === 'complete'
+      ? `OFFLINE COPY READY · ${formatBytes(activeDownload.bytes || activeDownload.total)}`
+      : `${formatBytes(activeDownload?.bytes || 0)} DOWNLOADED · ${activeDownload?.state === 'paused' ? 'DOWNLOAD PAUSED' : 'MORE ARRIVING'}`
+    : isLocal ? 'PLAYING FROM THIS DEVICE' : params.kind ? `${String(params.kind).toUpperCase()} · NABEES MOVIEHUB` : 'NABEES MOVIEHUB';
+  const displayedFailure = failure && isPartialDownload && activeDownload?.state !== 'complete'
+    ? activeDownload?.state === 'downloading'
+      ? 'This video needs a little more of the file before it can play. The download is still running.'
+      : 'This downloaded portion may need more data to start. Continue the download, then retry from here.'
+    : failure;
 
   const chooseAudio = (track?: any) => {
     if (!track) {
@@ -211,14 +256,36 @@ export default function Player() {
       player.audioTrack = track;
       setActiveAudioId(String(track.id || track.label || track.language || 'auto'));
     }
-    setAudioMenuOpen(false);
+    setSettingsOpen(false);
+    revealControls();
+  };
+
+  const chooseQuality = (stream: NonNullable<typeof sourceQuery.data>[number]) => {
+    setSelectedQuality(stream.quality);
+    setUrl(stream.url);
+    setFailure('');
+    setSettingsOpen(false);
+    revealControls();
+  };
+
+  const chooseSubtitle = (nextUrl: string, language: string) => {
+    setSubtitleUrl(nextUrl);
+    setSubtitleLanguage(language);
+    setSettingsOpen(false);
+    revealControls();
+  };
+
+  const chooseSpeed = (nextSpeed: number) => {
+    setSpeed(nextSpeed);
+    player.playbackRate = nextSpeed;
+    setSettingsOpen(false);
     revealControls();
   };
 
   const revealControls = () => {
     setControlsVisible(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    if (playing) hideTimer.current = setTimeout(() => setControlsVisible(false), 5000);
+    if (playing) hideTimer.current = setTimeout(() => setControlsVisible(false), 3500);
   };
   const togglePlayback = () => {
     revealControls();
@@ -231,14 +298,7 @@ export default function Player() {
       revealControls();
     }
   };
-  const cycleSpeed = () => {
-    const next = speedSteps[(speedSteps.indexOf(speed) + 1) % speedSteps.length];
-    setSpeed(next);
-    player.playbackRate = next;
-    revealControls();
-  };
-
-  const statusText = failure || sourceQuery.error?.message || (sourceQuery.isFetching ? 'Finding the best stream…' : 'This video is unavailable.');
+  const statusText = displayedFailure || sourceQuery.error?.message || (sourceQuery.isFetching ? 'Finding the best stream…' : 'This video is unavailable.');
 
   return (
     <View style={styles.root}>
@@ -255,11 +315,26 @@ export default function Player() {
         />
       )}
 
-      <Pressable
-        accessibilityLabel={controlsVisible ? 'Hide player controls' : 'Show player controls'}
-        onPress={() => controlsVisible ? setControlsVisible(false) : revealControls()}
-        style={StyleSheet.absoluteFill}
-      />
+      {!!url ? (
+        <Pressable
+          accessibilityLabel={controlsVisible ? 'Hide player controls' : 'Show player controls'}
+          onPress={() => {
+            if (settingsOpen) { setSettingsOpen(false); return; }
+            controlsVisible ? setControlsVisible(false) : revealControls();
+          }}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
+      {!!url ? (
+        <Pressable
+          onPress={() => router.back()}
+          accessibilityLabel="Close player"
+          testID="player-close"
+          style={[styles.closeButton, { top: insets.top + 10 }]}
+        >
+          <Ionicons name="close" size={20} color={colors.foreground} />
+        </Pressable>
+      ) : null}
 
       {isBuffering && (
       <View pointerEvents="none" style={styles.centerMessage}>
@@ -288,58 +363,117 @@ export default function Player() {
       )}
 
       {url && controlsVisible && (
-        <View pointerEvents="box-none" style={styles.chrome}>
-          <View style={[styles.topBar, { paddingTop: Platform.OS === 'web' ? 70 : 42 }]}>
-              <Pressable onPress={() => router.back()} accessibilityLabel="Close player" testID="player-close" style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={21} color="#fff" />
-            </Pressable>
+        <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(140)} pointerEvents="box-none" style={styles.chrome}>
+          <LinearGradient colors={['rgba(4,5,7,.84)', 'rgba(4,5,7,.24)', 'transparent']} locations={[0, 0.72, 1]} style={styles.topFade} pointerEvents="none" />
+          <LinearGradient colors={['transparent', 'rgba(4,5,7,.34)', 'rgba(4,5,7,.92)']} locations={[0, 0.2, 1]} style={styles.bottomFade} pointerEvents="none" />
+          <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
             <View style={styles.titleWrap}>
               <Text numberOfLines={1} style={styles.title}>{title}</Text>
-              <Text style={styles.subtitle}>{isLocal ? 'PLAYING FROM THIS DEVICE' : params.kind ? `${String(params.kind).toUpperCase()} · NABEES MOVIEHUB` : 'NABEES MOVIEHUB'}</Text>
+              <Text numberOfLines={1} style={styles.subtitle}>{partialStatus}</Text>
             </View>
-            <Pressable onPress={cycleSpeed} accessibilityLabel={`Playback speed ${speed} times`} style={styles.speedButton}>
-              <Text style={styles.speedLabel}>{speed}×</Text>
+            <Pressable onPress={() => { setSettingsOpen(true); revealControls(); }} accessibilityLabel={`Video quality ${selectedQuality || 'automatic'}`} style={styles.qualityBadge}>
+              <Text style={styles.qualityBadgeText}>{selectedQuality ? `${selectedQuality.replace(/p$/i, '')}p` : 'AUTO'}</Text>
             </Pressable>
-            {audioTracks.length > 1 ? (
-              <Pressable
-                onPress={() => setAudioMenuOpen((open) => !open)}
-                accessibilityLabel={`Audio track ${currentAudio?.label || currentAudio?.language || 'Auto'}`}
-                style={styles.audioButton}
-              >
-                <Ionicons name="language-outline" size={17} color="#fff" />
-              </Pressable>
-            ) : null}
-            <Pressable onPress={() => void videoViewRef.current?.enterFullscreen()} accessibilityLabel="Enter fullscreen" style={styles.iconButton}>
-              <Ionicons name="scan-outline" size={20} color="#fff" />
+            <Pressable
+              onPress={() => { setSettingsOpen((open) => !open); setControlsVisible(true); }}
+              accessibilityLabel="Open playback settings"
+              testID="player-settings"
+              style={[styles.iconButton, settingsOpen && styles.iconButtonActive]}
+            >
+              <Ionicons name="options-outline" size={19} color="#fff" />
             </Pressable>
           </View>
 
-          {audioMenuOpen ? (
-            <View style={[styles.audioMenu, { top: Platform.OS === 'web' ? 126 : 98 }]}>
-              <Text style={styles.audioMenuTitle}>AUDIO TRACK</Text>
-              <Pressable onPress={() => chooseAudio()} style={styles.audioOption}>
-                <Text style={styles.audioOptionLabel}>Auto / source default</Text>
-                {activeAudioId === 'auto' ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
-              </Pressable>
-              {audioTracks.map((track, index) => {
-                const id = String(track.id || track.label || track.language || index);
-                const label = String(track.label || track.name || track.language || `Audio ${index + 1}`);
-                const selected = activeAudioId === id;
-                return (
-                  <Pressable key={id} onPress={() => chooseAudio(track)} style={styles.audioOption}>
-                    <View style={{ flex: 1 }}>
-                      <Text numberOfLines={1} style={styles.audioOptionLabel}>{label}</Text>
-                      {track.language && track.language !== label ? <Text style={styles.audioOptionDetail}>{track.language}</Text> : null}
-                    </View>
-                    {selected ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+          {settingsOpen ? (
+            <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)} style={styles.settingsPanel}>
+              <View style={styles.settingsHeader}>
+                <View>
+                  <Text style={styles.settingsTitle}>Playback settings</Text>
+                  <Text style={styles.settingsSubtitle}>Choose how this video plays</Text>
+                </View>
+                <Pressable onPress={() => setSettingsOpen(false)} accessibilityLabel="Close playback settings" style={styles.settingsClose}>
+                  <Ionicons name="close" size={17} color="#fff" />
+                </Pressable>
+              </View>
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.settingsContent}>
+                <Text style={styles.settingSection}>VIDEO QUALITY</Text>
+                {sourceQuery.data?.length ? (
+                  <View style={styles.choiceWrap}>
+                    {sourceQuery.data.map((stream, index) => {
+                      const selected = url === stream.url || String(stream.quality) === selectedQuality;
+                      const label = stream.quality ? `${String(stream.quality).replace(/p$/i, '')}p` : `Source ${index + 1}`;
+                      return (
+                        <Pressable key={`${stream.id}-${index}`} onPress={() => chooseQuality(stream)} style={[styles.choicePill, selected && styles.choicePillActive]}>
+                          <Text style={[styles.choiceLabel, selected && styles.choiceLabelActive]}>{label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text style={styles.settingsHint}>{sourceQuery.isFetching ? 'Checking available streams…' : 'No alternate quality options for this source.'}</Text>
+                )}
+
+                <Text style={styles.settingSection}>PLAYBACK SPEED</Text>
+                <View style={styles.choiceWrap}>
+                  {speedSteps.map((step) => (
+                    <Pressable key={step} onPress={() => chooseSpeed(step)} style={[styles.choicePill, speed === step && styles.choicePillActive]}>
+                      <Text style={[styles.choiceLabel, speed === step && styles.choiceLabelActive]}>{step}×</Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                <Text style={styles.settingSection}>AUDIO</Text>
+                <Pressable onPress={() => chooseAudio()} style={styles.settingOption}>
+                  <Text style={styles.settingOptionLabel}>Auto / source default</Text>
+                  {activeAudioId === 'auto' ? <Ionicons name="checkmark" size={16} color={colors.primary} /> : null}
+                </Pressable>
+                {audioTracks.map((track, index) => {
+                  const id = String(track.id || track.label || track.language || index);
+                  const label = String(track.label || track.name || track.language || `Audio ${index + 1}`);
+                  const selected = activeAudioId === id;
+                  return (
+                    <Pressable key={id} onPress={() => chooseAudio(track)} style={styles.settingOption}>
+                      <View style={{ flex: 1 }}>
+                        <Text numberOfLines={1} style={styles.settingOptionLabel}>{label}</Text>
+                        {track.language && track.language !== label ? <Text style={styles.settingsHint}>{track.language}</Text> : null}
+                      </View>
+                      {selected ? <Ionicons name="checkmark" size={16} color={colors.primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+                {!audioTracks.length ? <Text style={styles.settingsHint}>Using the audio included with this stream.</Text> : null}
+
+                <Text style={styles.settingSection}>SUBTITLES</Text>
+                <Pressable onPress={() => chooseSubtitle('', '')} style={styles.settingOption}>
+                  <Text style={styles.settingOptionLabel}>Off</Text>
+                  {!subtitleUrl ? <Ionicons name="checkmark" size={16} color={colors.primary} /> : null}
+                </Pressable>
+                {subtitleOptions.map((subtitle) => (
+                  <Pressable key={subtitle.url} onPress={() => chooseSubtitle(subtitle.url, subtitle.language)} style={styles.settingOption}>
+                    <Text numberOfLines={1} style={styles.settingOptionLabel}>{subtitle.language || 'Subtitles'}</Text>
+                    {subtitleUrl === subtitle.url ? <Ionicons name="checkmark" size={16} color={colors.primary} /> : null}
                   </Pressable>
-                );
-              })}
-            </View>
+                ))}
+                {!subtitleOptions.length ? <Text style={styles.settingsHint}>No separate subtitle tracks were listed for this source.</Text> : null}
+
+                <Text style={styles.settingSection}>VOLUME</Text>
+                <View style={styles.volumeRow}>
+                  <Pressable onPress={() => setVolume((value) => Math.max(0, Number((value - 0.1).toFixed(1))))} accessibilityLabel="Lower volume" style={styles.volumeButton}>
+                    <Ionicons name="volume-low-outline" size={17} color="#fff" />
+                  </Pressable>
+                  <View style={styles.volumeTrack}>
+                    <View style={[styles.volumeFill, { width: `${volume * 100}%`, backgroundColor: colors.primary }]} />
+                  </View>
+                  <Pressable onPress={() => setVolume((value) => Math.min(1, Number((value + 0.1).toFixed(1))))} accessibilityLabel="Raise volume" style={styles.volumeButton}>
+                    <Ionicons name="volume-high-outline" size={17} color="#fff" />
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </Animated.View>
           ) : null}
 
           <View style={styles.centerControls}>
-            {!failure ? (
+            {!displayedFailure ? (
               <>
                 <Pressable onPress={() => { player.seekBy(-10); revealControls(); }} accessibilityLabel="Back ten seconds" style={styles.skipButton}>
                   <Ionicons name="play-back" color="#fff" size={23} />
@@ -356,15 +490,15 @@ export default function Player() {
             ) : (
               <View style={styles.errorCard}>
                 <Ionicons name="alert-circle-outline" color="#fff" size={25} />
-                <Text style={styles.errorTitle}>{failure}</Text>
+                <Text style={styles.errorTitle}>{displayedFailure}</Text>
                 <Pressable onPress={() => { setFailure(''); if (url) player.replace(url); }} style={[styles.retryButton, { backgroundColor: colors.primary }]}>
-                  <Text style={styles.retryLabel}>Reload video</Text>
+                  <Text style={styles.retryLabel}>{isPartialDownload ? 'Retry downloaded part' : 'Reload video'}</Text>
                 </Pressable>
               </View>
             )}
           </View>
 
-          <View style={styles.bottomBar}>
+          <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) + 10 }]}>
             {!isLive ? (
               <>
                 <View
@@ -385,12 +519,18 @@ export default function Player() {
                 <View style={styles.timeRow}>
                   <Text style={styles.timeLabel}>{formatTime(currentTime)}</Text>
                   <View style={{ flex: 1 }} />
-                  {!isLocal && !!url && (
+                  {!isLocal && !isPartialDownload && !!url && (
                     <Pressable onPress={() => void start(title, url)} accessibilityLabel="Download this video" style={styles.downloadButton}>
                       <Ionicons name="download-outline" size={19} color="#fff" />
-                      <Text style={styles.downloadLabel}>Save offline</Text>
+                      <Text style={styles.downloadLabel}>Download</Text>
                     </Pressable>
                   )}
+                  <Pressable onPress={() => setVolume((value) => value > 0 ? 0 : 1)} accessibilityLabel={volume > 0 ? 'Mute video' : 'Unmute video'} style={styles.actionButton}>
+                    <Ionicons name={volume > 0 ? 'volume-high-outline' : 'volume-mute-outline'} size={17} color="#fff" />
+                  </Pressable>
+                  <Pressable onPress={() => void videoViewRef.current?.enterFullscreen()} accessibilityLabel="Enter fullscreen" style={styles.actionButton}>
+                    <Ionicons name="scan-outline" size={17} color="#fff" />
+                  </Pressable>
                   <Text style={styles.timeLabel}>{formatTime(duration)}</Text>
                 </View>
               </>
@@ -402,7 +542,7 @@ export default function Player() {
               </View>
             )}
           </View>
-        </View>
+        </Animated.View>
       )}
 
       {subtitleLoading ? (
@@ -421,33 +561,51 @@ export default function Player() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#050506', justifyContent: 'center' },
   chrome: { ...StyleSheet.absoluteFill, justifyContent: 'space-between' },
-  topBar: { paddingHorizontal: 16, paddingBottom: 36, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'rgba(5,5,6,.58)' },
-  titleWrap: { flex: 1 },
-  title: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 16 },
-  subtitle: { color: 'rgba(255,255,255,.6)', fontFamily: 'Outfit_500Medium', fontSize: 9, letterSpacing: 1.2, marginTop: 4 },
-  iconButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
-  audioButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
-  audioMenu: { position: 'absolute', right: 68, width: 230, padding: 9, borderRadius: 17, backgroundColor: 'rgba(18,18,21,.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,.16)', zIndex: 5 },
-  audioMenuTitle: { color: 'rgba(255,255,255,.56)', fontFamily: 'Outfit_700Bold', fontSize: 9, letterSpacing: 1.2, paddingHorizontal: 9, paddingTop: 7, paddingBottom: 5 },
-  audioOption: { minHeight: 39, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 9, borderRadius: 10 },
-  audioOptionLabel: { color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 11 },
-  audioOptionDetail: { color: 'rgba(255,255,255,.55)', fontSize: 9, marginTop: 2 },
-  speedButton: { minWidth: 43, height: 42, paddingHorizontal: 9, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
-  speedLabel: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 12 },
-  centerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 35 },
-  skipButton: { width: 54, height: 54, alignItems: 'center', justifyContent: 'center' },
+  topFade: { position: 'absolute', top: 0, left: 0, right: 0, height: 220 },
+  bottomFade: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 260 },
+  closeButton: { position: 'absolute', left: 18, width: 42, height: 42, zIndex: 12, borderRadius: 22, backgroundColor: 'rgba(16,17,19,.74)', borderWidth: 1, borderColor: 'rgba(255,255,255,.2)', alignItems: 'center', justifyContent: 'center' },
+  topBar: { paddingHorizontal: 18, paddingLeft: 72, paddingBottom: 14, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  titleWrap: { flex: 1, minWidth: 0 },
+  title: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 15 },
+  subtitle: { color: 'rgba(255,255,255,.64)', fontFamily: 'Outfit_500Medium', fontSize: 8, letterSpacing: 1, marginTop: 4 },
+  iconButton: { width: 40, height: 40, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)', alignItems: 'center', justifyContent: 'center' },
+  iconButtonActive: { backgroundColor: 'rgba(228,17,17,.42)', borderColor: 'rgba(255,255,255,.32)' },
+  qualityBadge: { minWidth: 44, height: 36, paddingHorizontal: 9, borderRadius: 12, backgroundColor: 'rgba(255,255,255,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.14)', alignItems: 'center', justifyContent: 'center' },
+  qualityBadgeText: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 10, letterSpacing: .5 },
+  settingsPanel: { position: 'absolute', right: 16, bottom: 104, width: '86%', maxWidth: 360, maxHeight: '62%', overflow: 'hidden', borderRadius: 22, backgroundColor: 'rgba(17,18,21,.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,.17)', zIndex: 9, shadowColor: '#000', shadowOpacity: .42, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 18 },
+  settingsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 15, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,.1)' },
+  settingsTitle: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 14 },
+  settingsSubtitle: { color: 'rgba(255,255,255,.5)', fontFamily: 'Outfit_400Regular', fontSize: 10, marginTop: 3 },
+  settingsClose: { width: 31, height: 31, borderRadius: 16, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
+  settingsContent: { paddingHorizontal: 15, paddingTop: 5, paddingBottom: 16 },
+  settingSection: { color: 'rgba(255,255,255,.52)', fontFamily: 'Outfit_700Bold', fontSize: 9, letterSpacing: 1.15, marginTop: 15, marginBottom: 8 },
+  choiceWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  choicePill: { minHeight: 31, paddingHorizontal: 11, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,.15)', backgroundColor: 'rgba(255,255,255,.07)', alignItems: 'center', justifyContent: 'center' },
+  choicePillActive: { backgroundColor: 'rgba(228,17,17,.2)', borderColor: 'rgba(228,17,17,.8)' },
+  choiceLabel: { color: 'rgba(255,255,255,.77)', fontFamily: 'Outfit_500Medium', fontSize: 10 },
+  choiceLabelActive: { color: '#fff', fontFamily: 'Outfit_700Bold' },
+  settingOption: { minHeight: 37, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 10, borderRadius: 10 },
+  settingOptionLabel: { color: '#fff', fontFamily: 'Outfit_500Medium', fontSize: 11 },
+  settingsHint: { color: 'rgba(255,255,255,.48)', fontFamily: 'Outfit_400Regular', fontSize: 10, lineHeight: 15, marginHorizontal: 10, marginTop: 3 },
+  volumeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 5, paddingVertical: 2 },
+  volumeButton: { width: 31, height: 31, borderRadius: 16, backgroundColor: 'rgba(255,255,255,.1)', alignItems: 'center', justifyContent: 'center' },
+  volumeTrack: { flex: 1, height: 4, borderRadius: 3, backgroundColor: 'rgba(255,255,255,.18)', overflow: 'hidden' },
+  volumeFill: { height: '100%', borderRadius: 3 },
+  centerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36 },
+  skipButton: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(17,18,21,.43)', borderWidth: 1, borderColor: 'rgba(255,255,255,.14)', alignItems: 'center', justifyContent: 'center' },
   skipText: { color: '#fff', fontSize: 9, fontFamily: 'Outfit_600SemiBold', marginTop: -3 },
-  playButton: { width: 66, height: 66, borderRadius: 34, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', paddingLeft: 2, shadowColor: '#000', shadowOpacity: .35, shadowRadius: 18, elevation: 8 },
-  bottomBar: { paddingHorizontal: 20, paddingBottom: Platform.OS === 'web' ? 36 : 26, paddingTop: 40, backgroundColor: 'rgba(5,5,6,.64)' },
-  progressTouchArea: { height: 24, justifyContent: 'center' },
-  progressTrack: { height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.3)', overflow: 'visible' },
-  bufferedTrack: { position: 'absolute', top: 0, left: 0, height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.55)' },
+  playButton: { width: 72, height: 72, borderRadius: 38, backgroundColor: '#fff', borderWidth: 4, borderColor: 'rgba(255,255,255,.32)', alignItems: 'center', justifyContent: 'center', paddingLeft: 2, shadowColor: '#000', shadowOpacity: .45, shadowRadius: 20, elevation: 10 },
+  bottomBar: { paddingHorizontal: 18, paddingTop: 24 },
+  progressTouchArea: { height: 25, justifyContent: 'center' },
+  progressTrack: { height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.25)', overflow: 'visible' },
+  bufferedTrack: { position: 'absolute', top: 0, left: 0, height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.46)' },
   progressFill: { position: 'absolute', top: 0, left: 0, height: 4, borderRadius: 4 },
   progressThumb: { position: 'absolute', top: -4, width: 12, height: 12, marginLeft: -6, borderRadius: 7, backgroundColor: '#fff', borderWidth: 2 },
-  timeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 12 },
+  timeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 },
   timeLabel: { color: 'rgba(255,255,255,.82)', fontFamily: 'Outfit_500Medium', fontSize: 11 },
-  downloadButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 9, borderRadius: 15, backgroundColor: 'rgba(255,255,255,.12)' },
+  downloadButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 15, backgroundColor: 'rgba(255,255,255,.12)' },
   downloadLabel: { color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 10 },
+  actionButton: { width: 32, height: 32, borderRadius: 17, backgroundColor: 'rgba(255,255,255,.13)', alignItems: 'center', justifyContent: 'center' },
   liveRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   liveDot: { width: 7, height: 7, borderRadius: 4 },
   liveLabel: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 11, letterSpacing: 1 },

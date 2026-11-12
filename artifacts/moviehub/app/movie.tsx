@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Image, ImageBackground } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -12,8 +14,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FadeInDown } from 'react-native-reanimated';
-import Animated from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+} from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
 import { getDetails, getRecommendations, getStreams, Movie, Stream } from '@/lib/providers';
 import { PlaybackOptionsPanel, PlaybackSeason } from '@/components/PlaybackOptionsPanel';
@@ -53,10 +61,12 @@ export default function MovieDetails() {
   const colors = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   const [isMuted, setIsMuted] = useState(true);
+  const posterArrival = useSharedValue(0);
   const [selectedStreamId, setSelectedStreamId] = useState('');
   const [selectedAudio, setSelectedAudio] = useState('auto');
   const [selectedSubtitle, setSelectedSubtitle] = useState('');
@@ -125,6 +135,11 @@ export default function MovieDetails() {
     trailerPlayer.muted = isMuted;
   }, [trailerPlayer, isMuted]);
 
+  useEffect(() => {
+    posterArrival.value = 0;
+    posterArrival.value = withDelay(100, withSpring(1, { damping: 22, stiffness: 105, mass: 0.9 }));
+  }, [id, posterArrival]);
+
   useFocusEffect(
     useCallback(() => {
       if (!trailerUrl) return undefined;
@@ -164,14 +179,6 @@ export default function MovieDetails() {
     });
   };
 
-  const openTrailer = () => {
-    if (!trailerUrl) return;
-    trailerPlayer.pause();
-    router.push({
-      pathname: '/player',
-      params: { title: `${title} · Trailer`, url: trailerUrl, kind: 'trailer' },
-    });
-  };
   const openRecommendation = (movie: Movie) => {
     router.push({ pathname: '/movie', params: { id: String(movie.subjectId) } });
   };
@@ -179,6 +186,22 @@ export default function MovieDetails() {
   const actors = (details?.stars || []).filter((person: any) => person.staffType === 1);
   const crew = (details?.stars || []).filter((person: any) => person.staffType !== 1);
   const image = subject?.cover?.url || subject?.coverUrl || subject?.still?.url || '';
+  const heroHeight = Math.min(650, Math.max(540, screenHeight * 0.72));
+  const posterStyle = useAnimatedStyle(() => {
+    const startWidth = Math.min(screenWidth * 0.76, 310);
+    const startHeight = heroHeight * 0.66;
+    return {
+      left: interpolate(posterArrival.value, [0, 1], [(screenWidth - startWidth) / 2, 20]),
+      top: interpolate(posterArrival.value, [0, 1], [heroHeight * 0.035, heroHeight - 194]),
+      width: interpolate(posterArrival.value, [0, 1], [startWidth, 104]),
+      height: interpolate(posterArrival.value, [0, 1], [startHeight, 154]),
+      borderRadius: interpolate(posterArrival.value, [0, 1], [24, 17]),
+    };
+  });
+  const heroContentStyle = useAnimatedStyle(() => ({
+    opacity: posterArrival.value,
+    transform: [{ translateY: interpolate(posterArrival.value, [0, 1], [17, 0]) }],
+  }));
 
   if (detailsQuery.isLoading) {
     return <View style={{ flex: 1, backgroundColor: colors.background }}><Loading label="Loading title details…"/></View>;
@@ -202,101 +225,79 @@ export default function MovieDetails() {
       contentContainerStyle={{ paddingBottom: 116 }}
       showsVerticalScrollIndicator={false}
     >
-      <View style={{ height: 550, backgroundColor: colors.card }}>
-        <ImageBackground source={{ uri: image }} contentFit="cover" cachePolicy="disk" transition={260} style={{ flex: 1, justifyContent: 'flex-end' }}>
-          {trailerUrl ? (
-            <VideoView
-              player={trailerPlayer}
-              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-              contentFit="cover"
-              nativeControls={false}
-            />
-          ) : null}
-          <LinearGradient
-            colors={['rgba(8,9,11,.12)', 'rgba(8,9,11,.23)', 'rgba(8,9,11,.93)', colors.background]}
-            locations={[0, 0.48, 0.82, 1]}
-            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+      <View style={{ height: heroHeight, backgroundColor: colors.card, overflow: 'hidden' }}>
+        <ImageBackground source={{ uri: image }} contentFit="cover" cachePolicy="disk" transition={260} style={StyleSheet.absoluteFill} />
+        {trailerUrl ? (
+          <VideoView
+            player={trailerPlayer}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            nativeControls={false}
           />
+        ) : null}
+        <LinearGradient
+          colors={['rgba(8,9,11,.2)', 'rgba(8,9,11,.05)', 'rgba(8,9,11,.34)', colors.background]}
+          locations={[0, 0.38, 0.66, 1]}
+          style={StyleSheet.absoluteFill}
+        />
+        <Pressable
+          onPress={() => router.back()}
+          accessibilityLabel="Go back"
+          style={{ position: 'absolute', top: insets.top + 8, left: 18, width: 43, height: 43, borderRadius: 24, backgroundColor: 'rgba(8,9,11,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)', alignItems: 'center', justifyContent: 'center', zIndex: 7 }}
+        >
+          <Ionicons name="arrow-back" size={21} color={colors.foreground} />
+        </Pressable>
+        {trailerUrl ? (
           <Pressable
-            onPress={() => router.back()}
-            accessibilityLabel="Go back"
-            style={{
-              position: 'absolute',
-              top: insets.top + 8,
-              left: 18,
-              width: 43,
-              height: 43,
-              borderRadius: 24,
-              backgroundColor: 'rgba(8,9,11,.62)',
-              borderWidth: 1,
-              borderColor: 'rgba(255,255,255,.13)',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
+            onPress={() => setIsMuted((muted) => !muted)}
+            accessibilityLabel={isMuted ? 'Unmute background trailer' : 'Mute background trailer'}
+            style={{ position: 'absolute', top: insets.top + 8, right: 18, width: 43, height: 43, borderRadius: 24, backgroundColor: 'rgba(8,9,11,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)', alignItems: 'center', justifyContent: 'center', zIndex: 7 }}
           >
-            <Ionicons name="arrow-back" size={21} color="#fff" />
+            <Ionicons name={isMuted ? 'volume-mute-outline' : 'volume-high-outline'} size={19} color={colors.foreground} />
           </Pressable>
-          {trailerUrl ? (
-            <View style={{ position: 'absolute', top: insets.top + 8, right: 18, flexDirection: 'row', gap: 8 }}>
-              <Pressable
-                onPress={() => setIsMuted((muted) => !muted)}
-                accessibilityLabel={isMuted ? 'Unmute trailer' : 'Mute trailer'}
-                style={{ width: 43, height: 43, borderRadius: 24, backgroundColor: 'rgba(8,9,11,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <Ionicons name={isMuted ? 'volume-mute-outline' : 'volume-high-outline'} size={19} color="#fff" />
-              </Pressable>
-            </View>
-          ) : null}
+        ) : null}
 
-          <View style={{ paddingHorizontal: 22, paddingBottom: 25 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              {trailerUrl ? (
-                <View style={{ borderRadius: 12, backgroundColor: 'rgba(255,255,255,.12)', paddingHorizontal: 10, paddingVertical: 6 }}>
-                  <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 10, letterSpacing: 1 }}>
-                    TRAILER · AUTOPLAY
-                  </Text>
-                </View>
-              ) : null}
-              <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>
-                {subject.releaseDate?.slice(0, 4) || 'FEATURED'}  ·  {subject.subjectType === 2 ? 'SERIES' : 'MOVIE'}  ·  ★ {subject.imdbRatingValue || subject.rating || '—'}
-              </Text>
+        <Animated.View
+          pointerEvents="none"
+          style={[{ position: 'absolute', overflow: 'hidden', zIndex: 5, borderWidth: 1, borderColor: 'rgba(255,255,255,.38)', backgroundColor: colors.card, shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 22, shadowOffset: { width: 0, height: 12 }, elevation: 12 }, posterStyle]}
+        >
+          <Image source={{ uri: image }} contentFit="cover" cachePolicy="disk" transition={320} style={{ width: '100%', height: '100%' }} />
+          <LinearGradient colors={['transparent', 'rgba(0,0,0,.36)']} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 54 }} />
+        </Animated.View>
+
+        <Animated.View style={[{ position: 'absolute', left: 140, right: 18, bottom: 22, zIndex: 4 }, heroContentStyle]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 7 }}>
+            <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 7, backgroundColor: colors.primary }}>
+              <Text style={{ color: colors.primaryForeground, fontFamily: 'Outfit_700Bold', fontSize: 8, letterSpacing: 1 }}>{isSeries ? 'SERIES' : 'MOVIE'}</Text>
             </View>
-            <Animated.View entering={FadeInDown.duration(450)}>
-              <Text numberOfLines={3} style={{ color: '#fff', fontFamily: 'Outfit_800ExtraBold', fontSize: 34, lineHeight: 39 }}>
-                {title}
-              </Text>
-              <Text numberOfLines={3} style={{ color: 'rgba(255,255,255,.78)', lineHeight: 20, marginTop: 9 }}>
-                {subject.description || details.description || 'A new story to add to your list.'}
-              </Text>
-            </Animated.View>
-            <View style={{ flexDirection: 'row', gap: 9, marginTop: 18 }}>
-              <Pressable
-                onPress={playSelected}
-                testID="play-movie"
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#fff', borderRadius: 24, paddingHorizontal: 19, paddingVertical: 12 }}
-              >
-                <Ionicons name="play" size={17} color="#101114" />
-                <Text style={{ color: '#101114', fontFamily: 'Outfit_700Bold' }}>Play</Text>
-              </Pressable>
-              {trailerUrl ? (
-                <Pressable
-                  onPress={openTrailer}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 24, backgroundColor: 'rgba(255,255,255,.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,.2)', paddingHorizontal: 16, paddingVertical: 11 }}
-                >
-                  <Ionicons name="play-circle-outline" size={19} color="#fff" />
-                  <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold' }}>Watch trailer</Text>
-                </Pressable>
-              ) : null}
-              <Pressable
-                onPress={() => toggle(subject)}
-                accessibilityLabel={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-                style={{ width: 45, height: 45, borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,.38)', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <Ionicons name={isFavorite ? 'heart' : 'heart-outline'} size={20} color={isFavorite ? colors.primary : '#fff'} />
-              </Pressable>
-            </View>
+            <Text style={{ color: 'rgba(255,255,255,.86)', fontFamily: 'Outfit_600SemiBold', fontSize: 10 }}>
+              {subject.releaseDate?.slice(0, 4) || 'FEATURED'}  ·  ★ {subject.imdbRatingValue || subject.rating || '—'}
+            </Text>
           </View>
-        </ImageBackground>
+          <Text numberOfLines={2} style={{ color: colors.foreground, fontFamily: 'Outfit_800ExtraBold', fontSize: 22, lineHeight: 26 }}>
+            {title}
+          </Text>
+          <Text numberOfLines={2} style={{ color: 'rgba(255,255,255,.76)', fontFamily: 'Outfit_400Regular', fontSize: 11, lineHeight: 16, marginTop: 5 }}>
+            {subject.description || details.description || 'A story worth staying for.'}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 11 }}>
+            <Pressable
+              onPress={playSelected}
+              testID="play-movie"
+              style={{ minHeight: 39, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: colors.foreground, borderRadius: 20, paddingHorizontal: 13 }}
+            >
+              <Ionicons name="play" size={14} color={colors.background} />
+              <Text style={{ color: colors.background, fontFamily: 'Outfit_700Bold', fontSize: 11 }}>Watch now</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => toggle(subject)}
+              accessibilityLabel={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              style={{ width: 39, height: 39, borderRadius: 20, backgroundColor: 'rgba(255,255,255,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.28)', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Ionicons name={isFavorite ? 'heart' : 'heart-outline'} size={17} color={isFavorite ? colors.primary : colors.foreground} />
+            </Pressable>
+          </View>
+        </Animated.View>
       </View>
 
       {subject.genre ? (
