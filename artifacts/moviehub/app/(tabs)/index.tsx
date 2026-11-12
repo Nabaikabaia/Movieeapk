@@ -24,13 +24,15 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { GENRES, MOVIE_CATEGORIES } from '@/lib/catalog';
-import { getMovies, Movie } from '@/lib/providers';
+import { findMovies, getMovies, Movie } from '@/lib/providers';
+import { useUserPreferences } from '@/lib/UserPreferences';
 import { Problem, Rail, RailSkeleton } from '@/lib/ui';
 
 export default function Home() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { preferences } = useUserPreferences();
   const [activeCategoryCount, setActiveCategoryCount] = useState(3);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const carouselTransitioning = useRef(false);
@@ -57,6 +59,17 @@ export default function Home() {
       retry: 1,
     })),
   });
+  const preferredGenreQueries = useQueries({
+    queries: preferences.preferredGenres.slice(0, 3).map((slug) => {
+      const genre = GENRES.find((item) => item.slug === slug);
+      return {
+        queryKey: ['moviehub', 'preferred-genre', slug],
+        queryFn: () => findMovies(genre?.query || slug, 1, 10),
+        enabled: !!genre,
+        staleTime: 300_000,
+      };
+    }),
+  });
 
   const heroSlides = useMemo(() => {
     const seen = new Set<string>();
@@ -70,6 +83,15 @@ export default function Home() {
       .slice(0, 8);
   }, [categoryQueries]);
   const hero = heroSlides.length ? heroSlides[carouselIndex % heroSlides.length] : undefined;
+  const preferredMovies = useMemo(() => {
+    const seen = new Set<string>();
+    return preferredGenreQueries.flatMap((query) => query.data || []).filter((movie) => {
+      const id = String(movie.subjectId);
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }, [preferredGenreQueries]);
 
   const unlockCarousel = useCallback(() => {
     carouselTransitioning.current = false;
@@ -429,6 +451,26 @@ export default function Home() {
           ))}
         </View>
       </Animated.View>
+
+      {preferredMovies.length ? (
+        <Rail title="Picked for you" items={preferredMovies} onMovie={openMovie} />
+      ) : preferences.preferredGenres.length && preferredGenreQueries.some((query) => query.isLoading) ? (
+        <RailSkeleton title="Picked for you" />
+      ) : !preferences.preferredGenres.length ? (
+        <Pressable
+          onPress={() => router.push('/(tabs)/me' as any)}
+          accessibilityRole="button"
+          testID="set-preferred-genres"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 17, marginTop: 19, padding: 13, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}
+        >
+          <Ionicons name="sparkles-outline" size={19} color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>Tune your recommendations</Text>
+            <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 3 }}>Choose favorite genres in Me.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        </Pressable>
+      ) : null}
 
       <View style={{ marginTop: 25 }}>
         <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>

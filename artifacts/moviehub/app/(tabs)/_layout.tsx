@@ -16,9 +16,8 @@ const tabItems = [
   { route: 'index', href: '/', label: 'Home', icon: 'home-outline' },
   { route: 'discover', href: '/(tabs)/discover', label: 'Explore', icon: 'compass-outline' },
   { route: 'sports', href: '/(tabs)/sports', label: 'Sports', icon: 'trophy-outline' },
-  { route: 'iptv', href: '/(tabs)/iptv', label: 'IPTV', icon: 'globe-outline' },
-  { route: 'pluto', href: '/(tabs)/pluto', label: 'Pluto', icon: 'planet-outline' },
   { route: 'downloads', href: '/(tabs)/downloads', label: 'Downloads', icon: 'download-outline' },
+  { route: 'me', href: '/(tabs)/me', label: 'Me', icon: 'person-circle-outline' },
 ] as const;
 
 function FloatingTabItem({
@@ -112,8 +111,9 @@ function FloatingGlassBar({ state, navigation }: any) {
   const insets = useSafeAreaInsets();
   const currentRoute = state.routes[state.index]?.name;
   const colors = useColors();
-
-  if (!tabItems.some((item) => item.route === currentRoute)) return null;
+  const selectedTab = tabItems.some((item) => item.route === currentRoute)
+    ? currentRoute
+    : currentRoute === 'search' ? 'discover' : 'me';
 
   return (
     <View
@@ -156,7 +156,7 @@ function FloatingGlassBar({ state, navigation }: any) {
               routeKey={route.key}
               label={item.label}
               icon={item.icon}
-              focused={state.index === routeIndex}
+              focused={selectedTab === item.route}
               navigation={navigation}
             />
           );
@@ -182,11 +182,12 @@ export default function TabLayout() {
       <Tabs.Screen name="index" options={{ title: 'Home' }} />
       <Tabs.Screen name="discover" options={{ title: 'Explore' }} />
       <Tabs.Screen name="sports" options={{ title: 'Sports' }} />
-      <Tabs.Screen name="iptv" options={{ title: 'IPTV' }} />
-      <Tabs.Screen name="pluto" options={{ title: 'Pluto TV' }} />
       <Tabs.Screen name="downloads" options={{ title: 'Downloads' }} />
-      <Tabs.Screen name="library" options={{ title: 'Library' }} />
-      <Tabs.Screen name="search" options={{ title: 'Search' }} />
+      <Tabs.Screen name="me" options={{ title: 'Me' }} />
+      <Tabs.Screen name="iptv" options={{ href: null }} />
+      <Tabs.Screen name="pluto" options={{ href: null }} />
+      <Tabs.Screen name="library" options={{ href: null }} />
+      <Tabs.Screen name="search" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -1,3 +1,5 @@
+import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from './config';
+
 export const NABEES_API = 'https://spcytnumhpqpiwfwhycx.supabase.co/functions/v1/rapid-function';
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXJhYmFzZSIsInJlZiI6Imx1ZWZjdWZmY29qeGNxZG1ybmdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyNzQxNDEsImV4cCI6MjA4MTg1MDE0MX0.AeAsdjzttMtweZZWsYbfzm8D_5Kg5bPDveg8Qytzu5w';
 export const CONTENT_PROVIDERS = [
@@ -65,9 +67,23 @@ const catalogue = async (path: string) => {
   const x = await safe(`${NABEES_API}${path}`);
   return x.data ?? x;
 };
-export async function getMovies(slug = 'popular', page = 1, perPage = 30): Promise<Movie[]> {
+export type MoviePage = { items: Movie[]; hasMore: boolean; currentPage: number };
+function moviePage(data: any, key: 'subjectList' | 'items', page: number): MoviePage {
+  const items: Movie[] = Array.isArray(data?.[key]) ? data[key] : [];
+  const pager = data?.pager || data?.pagination || {};
+  const hasMore = typeof pager.hasMore === 'boolean'
+    ? pager.hasMore
+    : typeof data?.hasMore === 'boolean'
+      ? data.hasMore
+      : items.length > 0;
+  return { items, hasMore, currentPage: Number(pager.page || data?.currentPage) || page };
+}
+export async function getMoviesPage(slug = 'popular', page = 1, perPage = 30): Promise<MoviePage> {
   const d = await catalogue(`/movies/${slug}?page=${page}&perPage=${perPage}`);
-  return d.subjectList || [];
+  return moviePage(d, 'subjectList', page);
+}
+export async function getMovies(slug = 'popular', page = 1, perPage = 30): Promise<Movie[]> {
+  return (await getMoviesPage(slug, page, perPage)).items;
 }
 export async function getHome() {
   const [movies, series, trending] = await Promise.all([
@@ -77,9 +93,44 @@ export async function getHome() {
   ]);
   return { movies: movies.filter(x => x.subjectType === 1), series: series.filter(x => x.subjectType === 2), trending };
 }
-export async function findMovies(term: string): Promise<Movie[]> {
-  const d = await safe(`${NABEES_API}/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keyword: term, page: 1, perPage: 30, subjectType: 0 }) });
-  return d.data?.items || [];
+export async function findMoviesPage(term: string, page = 1, perPage = 30): Promise<MoviePage> {
+  const response = await safe(`${NABEES_API}/search`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keyword: term, page, perPage, subjectType: 0 }) });
+  return moviePage(response.data ?? response, 'items', page);
+}
+export async function findMovies(term: string, page = 1, perPage = 30): Promise<Movie[]> {
+  return (await findMoviesPage(term, page, perPage)).items;
+}
+export type StaffFilmographyPage = { items: Movie[]; hasMore: boolean; totalCount: number; currentPage: number };
+export async function getStaffFilmography(staffId: string, page = 1, perPage = 24): Promise<StaffFilmographyPage> {
+  const query = new URLSearchParams({
+    id: staffId,
+    p: String(page),
+    perPage: String(perPage),
+  });
+  const response = await safe(`${SUPABASE_URL}/functions/v1/staff?${query}`, {
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+    },
+  });
+  const rawItems: Movie[] = response.data?.items || [];
+  const seen = new Set<string>();
+  const items = rawItems.filter((movie) => {
+    const title = String(movie.title || '')
+      .replace(/[\[(（【][^\])）】]*[\])）】]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!movie.subjectId || !title || seen.has(title)) return false;
+    seen.add(title);
+    return true;
+  });
+  return {
+    items,
+    hasMore: Boolean(response.data?.hasMore),
+    totalCount: Number(response.data?.totalCount) || items.length,
+    currentPage: Number(response.data?.currentPage) || page,
+  };
 }
 export async function getSuggestions(term: string): Promise<Movie[]> {
   if (!term.trim()) return [];

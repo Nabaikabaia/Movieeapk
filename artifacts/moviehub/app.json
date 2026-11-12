@@ -21,6 +21,11 @@
     "plugins": [
       "expo-router",
       "expo-video",
+      ["expo-notifications", {
+        "icon": "./assets/images/icon.png",
+        "color": "#E41111",
+        "defaultChannel": "downloads"
+      }],
       ["expo-media-library", {
         "photosPermission": "Nabees Moviehub uses your selected video library to play local movies.",
         "savePhotosPermission": "Nabees Moviehub saves completed downloads to your video library when you choose.",

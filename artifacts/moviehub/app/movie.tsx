@@ -28,6 +28,7 @@ import { AudioOption, getDetails, getRecommendations, getStreams, getSubtitles, 
 import { PlaybackOptionsPanel, PlaybackSeason } from '@/components/PlaybackOptionsPanel';
 import { useFavorites } from '@/lib/Favorites';
 import { useDownloads } from '@/lib/Downloads';
+import { useWatchHistory } from '@/lib/WatchHistory';
 import { Loading, Problem, Rail } from '@/lib/ui';
 
 function buildPlaybackSeasons(input: any[]): PlaybackSeason[] {
@@ -116,7 +117,8 @@ export default function MovieDetails() {
   const trailerUrl = subject?.trailer?.videoAddress?.url;
   const trailerPlayer = useVideoPlayer(trailerUrl || null);
   const { items: favorites, toggle } = useFavorites();
-  const { start: startDownload } = useDownloads();
+  const { start: startDownload, canStart: canStartDownload } = useDownloads();
+  const { record: recordWatch } = useWatchHistory();
   const isFavorite = favorites.some((item) => item.subjectId === subject?.subjectId);
   const sourceQuery = useQuery({
     queryKey: ['movie-api-source', playbackSubject?.subjectId, playbackSubject?.detailPath, sourceSeason, sourceEpisode],
@@ -257,6 +259,7 @@ export default function MovieDetails() {
       const freshSubtitle = freshSubtitleOptions.find((item) => item.url === selectedSubtitle)
         || freshSubtitleOptions.find((item) => item.code === oldSubtitle?.code || item.language === oldSubtitle?.language)
         || oldSubtitle;
+      recordWatch(subject, isSeries ? { season: sourceSeason, episode: sourceEpisode } : undefined);
       router.push({
         pathname: '/player',
         params: {
@@ -287,6 +290,7 @@ export default function MovieDetails() {
     setActionError('');
     setDownloadNotice('');
     try {
+      if (!(await canStartDownload())) throw new Error('Your download network setting is blocking this connection.');
       const stream = await refreshSelectedStream();
       const downloadUrl = stream.downloadUrl || stream.proxyUrl || stream.url;
       if (!downloadUrl) throw new Error('This source does not provide a downloadable file.');
@@ -318,6 +322,10 @@ export default function MovieDetails() {
     let queued = 0;
 
     try {
+      if (!(await canStartDownload())) {
+        setActionError('Your download network setting is blocking this connection.');
+        return;
+      }
       for (let offset = 0; offset < episodeNumbers.length; offset += 3) {
         const batch = episodeNumbers.slice(offset, offset + 3);
         const resolved = await Promise.all(batch.map(async (episodeNumber) => {
@@ -371,7 +379,7 @@ export default function MovieDetails() {
     router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } });
   };
 
-  const actors = (details?.stars || []).filter((person: any) => person.staffType === 1);
+  const actors = (details?.stars || []).filter((person: any) => person.staffType === 1 && person.staffId);
   const crew = (details?.stars || []).filter((person: any) => person.staffType !== 1);
   const image = subject?.cover?.url || subject?.coverUrl || subject?.still?.url || '';
   const heroHeight = Math.min(650, Math.max(540, screenHeight * 0.72));
@@ -542,19 +550,35 @@ export default function MovieDetails() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 13, paddingHorizontal: 20 }}>
             {actors.map((person: any, index: number) => (
               <Animated.View key={`${person.staffId}-${index}`} entering={FadeInDown.delay(index * 35).duration(360)} style={{ width: 78, alignItems: 'center' }}>
-                {person.avatarUrl ? (
-                  <Image source={{ uri: person.avatarUrl }} contentFit="cover" cachePolicy="disk" transition={180} style={{ width: 66, height: 66, borderRadius: 34, backgroundColor: colors.card }} />
-                ) : (
-                  <View style={{ width: 66, height: 66, borderRadius: 34, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="person-outline" size={24} color={colors.mutedForeground} />
-                  </View>
-                )}
-                <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 11, marginTop: 8, textAlign: 'center' }}>
-                  {person.name}
-                </Text>
-                <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 2, textAlign: 'center' }}>
-                  {person.character || 'Cast'}
-                </Text>
+                <Pressable
+                  onPress={() => router.push({
+                    pathname: '/actor/[staffId]',
+                    params: {
+                      staffId: String(person.staffId),
+                      name: String(person.name || 'Actor'),
+                      avatarUrl: String(person.avatarUrl || ''),
+                      character: String(person.character || ''),
+                    },
+                  } as any)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`See ${person.name || 'actor'} filmography`}
+                  testID={`cast-${person.staffId}`}
+                  style={{ width: '100%', alignItems: 'center' }}
+                >
+                  {person.avatarUrl ? (
+                    <Image source={{ uri: person.avatarUrl }} contentFit="cover" cachePolicy="disk" transition={180} style={{ width: 66, height: 66, borderRadius: 34, backgroundColor: colors.card }} />
+                  ) : (
+                    <View style={{ width: 66, height: 66, borderRadius: 34, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="person-outline" size={24} color={colors.mutedForeground} />
+                    </View>
+                  )}
+                  <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 11, marginTop: 8, textAlign: 'center' }}>
+                    {person.name}
+                  </Text>
+                  <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 2, textAlign: 'center' }}>
+                    {person.character || 'Cast'}
+                  </Text>
+                </Pressable>
               </Animated.View>
             ))}
           </ScrollView>

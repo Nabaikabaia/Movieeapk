@@ -14,16 +14,19 @@ import {
   useFonts,
 } from '@expo-google-fonts/outfit';
 import { Stack } from 'expo-router';
+import { Platform } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { DownloadsProvider } from '@/lib/Downloads';
 import { FavoritesProvider } from '@/lib/Favorites';
+import { UserPreferencesProvider } from '@/lib/UserPreferences';
+import { WatchHistoryProvider } from '@/lib/WatchHistory';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 const OFFLINE_CACHE_KEY = 'moviehub-offline-content-v1';
 const OFFLINE_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-const OFFLINE_QUERY_PREFIXES = ['moviehub', 'details', 'recommendations', 'category', 'genre', 'search-results'];
+const OFFLINE_QUERY_PREFIXES = ['moviehub', 'details', 'recommendations', 'category', 'genre', 'search-results', 'browse-list', 'staff-filmography'];
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -31,6 +34,19 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+if (Platform.OS !== 'web') {
+  void import('expo-notifications').then((Notifications) => {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      }),
+    });
+  });
+}
 
 function RootLayoutNav() {
   return (
@@ -114,11 +130,15 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <FavoritesProvider><DownloadsProvider>
-            <GestureHandlerRootView style={{ flex: 1 }}>
-              <KeyboardProvider><RootLayoutNav /></KeyboardProvider>
-            </GestureHandlerRootView>
-          </DownloadsProvider></FavoritesProvider>
+          <UserPreferencesProvider>
+            <WatchHistoryProvider>
+              <FavoritesProvider><DownloadsProvider>
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  <KeyboardProvider><RootLayoutNav /></KeyboardProvider>
+                </GestureHandlerRootView>
+              </DownloadsProvider></FavoritesProvider>
+            </WatchHistoryProvider>
+          </UserPreferencesProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </SafeAreaProvider>
