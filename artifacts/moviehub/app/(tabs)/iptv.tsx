@@ -1,5 +1,5 @@
 import React, { useDeferredValue, useState } from 'react';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
@@ -36,15 +36,41 @@ export default function IPTV() {
   const channels: any[] = query.data || [];
 
   const playChannel = (channel: any) => {
-    const stream = channel.streams?.[0];
-    const url = stream?.url || channel.url || channel.streamUrl;
-    if (!url) return;
-    const finalUrl = source === 'IPTV'
-      ? getIptvStream(url, stream?.userAgent || channel.userAgent, stream?.referrer || channel.referrer)
-      : url;
+    const rawStreams = Array.isArray(channel.streams) && channel.streams.length
+      ? channel.streams
+      : [{ url: channel.url || channel.streamUrl, title: channel.quality || 'Primary feed' }];
+    const sources = rawStreams
+      .map((stream: any, index: number) => {
+        const rawUrl = typeof stream === 'string' ? stream : stream?.url || stream?.streamUrl || stream?.src;
+        if (!rawUrl) return null;
+        try {
+          if (/\.html?$/i.test(new URL(rawUrl).pathname)) return null;
+        } catch {
+          return null;
+        }
+        return {
+          id: String(stream?.id || `${channel.id || channel.name || 'channel'}-${index + 1}`),
+          title: stream?.title || stream?.name || stream?.quality || stream?.resolution || `Feed ${index + 1}`,
+          url: source === 'IPTV'
+            ? getIptvStream(rawUrl, stream?.userAgent || channel.userAgent, stream?.referrer || channel.referrer)
+            : rawUrl,
+        };
+      })
+      .filter((item: any): item is { id: string; title: string; url: string } => !!item)
+      .slice(0, 6);
+    if (!sources.length) {
+      Alert.alert('Stream unavailable', 'This channel does not currently have a playable feed.');
+      return;
+    }
     router.push({
       pathname: '/player',
-      params: { title: channel.name || channel.title || 'Live channel', url: finalUrl, kind: source },
+      params: {
+        title: channel.name || channel.title || 'Live channel',
+        url: sources[0].url,
+        sources: JSON.stringify(sources),
+        kind: source.toLowerCase(),
+        live: '1',
+      },
     });
   };
 

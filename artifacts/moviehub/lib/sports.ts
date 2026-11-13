@@ -1,6 +1,6 @@
 import { SPORTS_API } from './config';
 
-export type SportType = 'football' | 'basketball';
+export type SportType = 'football' | 'basketball' | 'cricket';
 
 export interface SportsTeam {
   id: string;
@@ -164,13 +164,24 @@ function normalizeStatus(status: unknown): Match['status'] {
 
 function mapSource(source: RawSource, index: number, prefix: string): PlaySource | null {
   const sourceUrl = source?.streamUrl || source?.path || source?.url;
-  if (!sourceUrl) return null;
+  if (!sourceUrl || isEmbedPage(sourceUrl)) return null;
   return {
     id: String(source.id || `${prefix}-${index + 1}`),
     title: source.title || source.name || `Stream ${index + 1}`,
     path: toStreamProxyUrl(sourceUrl),
     cover: source.cover?.url ? { url: source.cover.url } : null,
   };
+}
+
+function isEmbedPage(sourceUrl: string): boolean {
+  try {
+    const parsed = new URL(sourceUrl, `${SPORTS_API}/`);
+    const wrappedUrl = parsed.searchParams.get('url') || parsed.searchParams.get('u');
+    if (wrappedUrl && wrappedUrl !== sourceUrl) return isEmbedPage(wrappedUrl);
+    return /\.(?:html?|php)$/i.test(parsed.pathname);
+  } catch {
+    return /\.(?:html?|php)(?:$|[?#])/i.test(sourceUrl);
+  }
 }
 
 function toStreamProxyUrl(sourceUrl: string): string {
@@ -188,13 +199,14 @@ function toStreamProxyUrl(sourceUrl: string): string {
 }
 
 function mapMatch(raw: RawMatch): Match {
-  const type: SportType = raw.type === 'basketball' ? 'basketball' : 'football';
+  const type: SportType = raw.type === 'basketball' || raw.type === 'cricket' ? raw.type : 'football';
   const team = (value?: RawTeam): SportsTeam => {
     const name = value?.name || 'Team';
     return { id: '', name, score: String(value?.score ?? '0'), avatar: value?.avatar || '', abbreviation: abbreviation(name), type };
   };
   const directPath = typeof raw.playPath === 'string' ? raw.playPath : '';
-  const streamUrl = toStreamProxyUrl(raw.streamUrl || directPath || raw.playUrl || '');
+  const rawStreamUrl = raw.streamUrl || directPath || raw.playUrl || '';
+  const streamUrl = rawStreamUrl && !isEmbedPage(rawStreamUrl) ? toStreamProxyUrl(rawStreamUrl) : '';
   const playSource = (raw.playSource || []).map((source, index) => mapSource(source, index, String(raw.id))).filter((source): source is PlaySource => !!source);
   const replay = (raw.replay || []).map((source, index) => mapSource(source, index, `${raw.id}-replay`)).filter((source): source is PlaySource => !!source);
   const highlights = (raw.highlights || []).filter(source => !!source.path).map((source, index) => ({
@@ -227,7 +239,7 @@ function mapMatch(raw: RawMatch): Match {
     leagueLogo: raw.leagueLogo || '',
     matchRound: raw.matchRound || '',
     matchResult: raw.matchResult || '',
-    hasStream: !!(streamUrl || playSource.length),
+    hasStream: !!(streamUrl || playSource.length || replay.length),
   };
 }
 
@@ -250,16 +262,44 @@ export async function getMatches(
   return { matches: matches.slice(start, start + size), page, size, total: matches.length };
 }
 
+export async function getAllMatches(signal?: AbortSignal): Promise<Match[]> {
+  const payload = await fetchSports<ApiEnvelope>('list', signal);
+  return collectMatches(payload.matches).map(mapMatch);
+}
+
 export async function getMatchById(
   matchId: string,
   _sport: SportType,
   signal?: AbortSignal,
-  _initialMatch?: Match,
+  initialMatch?: Match,
 ): Promise<Match> {
-  const payload = await fetchSports<ApiEnvelope & RawMatch>(`match?id=${encodeURIComponent(matchId)}`, signal);
-  const raw = payload.match || payload as RawMatch;
-  if (!raw?.id || String(raw.id) !== String(matchId)) throw new Error('Match not found');
-  return mapMatch(raw);
+  try {
+    const payload = await fetchSports<ApiEnvelope & RawMatch>(`match?id=${encodeURIComponent(matchId)}`, signal);
+    const raw = payload.match || payload as RawMatch;
+    if (!raw?.id || String(raw.id) !== String(matchId)) throw new Error('Match not found');
+    const detail = mapMatch(raw);
+    if (!initialMatch) return detail;
+    const mergeSources = (items: PlaySource[]) =>
+      [...new Map(items.filter(item => !!item.path).map(item => [item.path, item])).values()];
+    const playSource = mergeSources([...detail.playSource, ...initialMatch.playSource]);
+    const replay = mergeSources([...detail.replay, ...initialMatch.replay]);
+    const streamUrl = detail.streamUrl || initialMatch.streamUrl;
+    return {
+      ...initialMatch,
+      ...detail,
+      type: raw.type === 'basketball' || raw.type === 'cricket' || raw.type === 'football' ? detail.type : initialMatch.type,
+      team1: detail.team1.name === 'Team' ? initialMatch.team1 : detail.team1,
+      team2: detail.team2.name === 'Team' ? initialMatch.team2 : detail.team2,
+      playSource,
+      replay,
+      streamUrl,
+      playPath: detail.playPath || initialMatch.playPath || streamUrl,
+      hasStream: detail.hasStream || initialMatch.hasStream || playSource.length > 0 || replay.length > 0,
+    };
+  } catch (error) {
+    if (initialMatch) return initialMatch;
+    throw error;
+  }
 }
 
 export async function getCompetitions(sport: SportType, signal?: AbortSignal): Promise<League[]> {
@@ -284,16 +324,27 @@ export async function getMatchDetail(
   const match = await getMatchById(matchId, sport, signal, initialMatch);
   if (match.type !== sport) throw new Error('Match sport does not match the selected sport');
   if (match.hasStream) {
-    const payload = await fetchSports<ApiEnvelope>(`play?id=${encodeURIComponent(matchId)}`, signal, false);
-    const directUrl = payload.streamUrl || payload.playPath || match.streamUrl || match.playPath;
-    const directPath = directUrl ? toStreamProxyUrl(directUrl) : '';
-    const channels = (payload.playSources || payload.sources || []).map((source, index) => mapSource(source, index, `${matchId}-play`)).filter((source): source is PlaySource => !!source);
-    match.playSource = [
+    let payload: ApiEnvelope = {};
+    try {
+      payload = await fetchSports<ApiEnvelope>(`play?id=${encodeURIComponent(matchId)}`, signal, false);
+    } catch {
+      // Some matches expose a source in the list response but have no separate
+      // play endpoint. Keep those sources instead of failing the watch flow.
+    }
+    const rawDirectUrl = payload.streamUrl || payload.playPath || match.streamUrl || match.playPath || '';
+    const directPath = rawDirectUrl && !isEmbedPage(rawDirectUrl) ? toStreamProxyUrl(rawDirectUrl) : '';
+    const channels = (payload.playSources || payload.sources || [])
+      .map((source, index) => mapSource(source, index, `${matchId}-play`))
+      .filter((source): source is PlaySource => !!source);
+    const allSources = [
       ...(directPath ? [{ id: `${matchId}-direct`, title: 'Direct stream', path: directPath, cover: null }] : []),
-      ...channels.filter(source => source.path !== directPath),
+      ...channels,
+      ...match.playSource,
+      ...match.replay,
     ];
-    match.playPath = directPath;
-    match.streamUrl = directPath;
+    match.playSource = [...new Map(allSources.filter(source => !!source.path).map(source => [source.path, source])).values()];
+    match.playPath = match.playSource[0]?.path || match.streamUrl;
+    match.streamUrl = match.playSource[0]?.path || match.streamUrl;
     match.hasStream = match.playSource.length > 0;
   }
   return { match, newsList: [] };

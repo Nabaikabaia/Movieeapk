@@ -248,7 +248,9 @@ export async function getSubtitles(movie: Movie, stream: Stream, season = 0, epi
 }
 export async function getPluto() {
   const d = await safe('https://api.nabeestech.com/pluto/channels');
-  return d.channels || [];
+  const channels = Array.isArray(d.channels) ? d.channels : [];
+  const flagged = (value: unknown) => value === true || value === 1 || value === '1' || value === 'true';
+  return channels.filter((channel: any) => !flagged(channel.closed) && !flagged(channel.is_nsfw) && !flagged(channel.nsfw));
 }
 export async function getGlobeCountries() {
   const d = await safe('https://movieapi.nabees.online/globetv/co'); return d.data || [];

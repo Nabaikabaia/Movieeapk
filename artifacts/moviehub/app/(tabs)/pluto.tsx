@@ -29,7 +29,7 @@ export default function PlutoTV() {
     const id = String(channel.id || channel._id || channel.slug || channel.name || '');
     router.push({
       pathname: '/player',
-      params: { title: channel.name || channel.title || 'Pluto TV', channelId: id, kind: 'pluto' },
+      params: { title: channel.name || channel.title || 'Pluto TV', channelId: id, kind: 'pluto', live: '1' },
     });
   };
 

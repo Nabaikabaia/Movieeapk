@@ -8,10 +8,11 @@ import { FadeInDown } from 'react-native-reanimated';
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
-import { getSports } from '@/lib/providers';
+import { getAllMatches, getMatchDetail, Match, SportType } from '@/lib/sports';
 import { Empty, Loading, Problem } from '@/lib/ui';
 
 type SportsFilter = 'All' | 'Live' | 'Upcoming' | 'Results';
+type SportFilter = 'All' | SportType;
 
 function getStatus(status: string) {
   if (/ing|live|progress/i.test(status)) return 'Live';
@@ -34,22 +35,48 @@ export default function Sports() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<SportsFilter>('All');
-  const query = useQuery({ queryKey: ['sports', 'movie-api'], queryFn: getSports, staleTime: 90_000 });
+  const [sportFilter, setSportFilter] = useState<SportFilter>('All');
+  const [openingMatchId, setOpeningMatchId] = useState('');
+  const [playError, setPlayError] = useState('');
+  const query = useQuery({
+    queryKey: ['sports', 'all-matches'],
+    queryFn: () => getAllMatches(),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
 
   const matches = useMemo(() => {
-    const data = query.data || {};
-    const all = Object.values(data).flatMap((value: any) => Array.isArray(value) ? value : []);
-    const unique = [...new Map(all.map((match: any) => [match.id, match])).values()] as any[];
-    return filter === 'All' ? unique : unique.filter((match) => getStatus(match.status) === filter);
-  }, [query.data, filter]);
+    const all = query.data || [];
+    return all.filter((match) =>
+      (sportFilter === 'All' || match.type === sportFilter) &&
+      (filter === 'All' || getStatus(match.status) === filter),
+    );
+  }, [query.data, filter, sportFilter]);
 
-  const openMatch = (match: any) => {
-    const source = match.streamUrl || match.playUrl || match.playPath || match.playSource?.[0]?.url;
-    if (!source) return;
-    router.push({
-      pathname: '/player',
-      params: { title: `${match.team1?.name || ''} vs ${match.team2?.name || ''}`, url: source, kind: 'sports' },
-    });
+  const openMatch = async (match: Match) => {
+    setOpeningMatchId(match.id);
+    setPlayError('');
+    try {
+      const detail = await getMatchDetail(match.id, match.type, undefined, match);
+      const sources = detail.match.playSource
+        .filter((source) => !!source.path)
+        .map((source) => ({ id: source.id, title: source.title, url: source.path }));
+      if (!sources.length) throw new Error('No playable stream is available for this match right now.');
+      router.push({
+        pathname: '/player',
+        params: {
+          title: `${detail.match.team1.name} vs ${detail.match.team2.name}`,
+          url: sources[0].url,
+          sources: JSON.stringify(sources),
+          kind: 'sports',
+          sport: detail.match.type,
+        },
+      });
+    } catch (error) {
+      setPlayError(error instanceof Error ? error.message : 'This sports stream could not be opened.');
+    } finally {
+      setOpeningMatchId('');
+    }
   };
 
   return (
@@ -62,6 +89,23 @@ export default function Sports() {
         <Text style={{ color: colors.foreground, fontFamily: 'Outfit_800ExtraBold', fontSize: 30 }}>Sports</Text>
         <Text style={{ color: colors.mutedForeground, marginTop: 3 }}>Live fixtures, upcoming games and replays.</Text>
       </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 18, gap: 8, marginTop: 17 }}>
+        {([
+          ['All', 'All sports'],
+          ['football', 'Football'],
+          ['basketball', 'Basketball'],
+          ['cricket', 'Cricket'],
+        ] as [SportFilter, string][]).map(([value, label]) => (
+          <Pressable
+            key={value}
+            onPress={() => setSportFilter(value)}
+            style={{ paddingHorizontal: 13, paddingVertical: 8, borderRadius: 18, backgroundColor: sportFilter === value ? colors.primary : colors.card, borderWidth: 1, borderColor: sportFilter === value ? colors.primary : colors.border }}
+          >
+            <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 11 }}>{label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 18, gap: 8, marginTop: 19 }}>
         {(['All', 'Live', 'Upcoming', 'Results'] as SportsFilter[]).map((item) => (
@@ -77,6 +121,11 @@ export default function Sports() {
 
       {query.isLoading && <Loading label="Loading sports fixtures…" />}
       {query.isError && <Problem message={query.error.message} retry={() => void query.refetch()} />}
+      {playError ? (
+        <Text accessibilityRole="alert" style={{ color: colors.primary, marginHorizontal: 20, marginTop: 12, fontSize: 12 }}>
+          {playError}
+        </Text>
+      ) : null}
 
       {!query.isLoading && !query.isError && matches.length === 0 ? (
         <Empty icon="trophy-outline" title="No fixtures in this view" subtitle="Try another filter or check again later." />
@@ -85,7 +134,7 @@ export default function Sports() {
       <View style={{ gap: 11, paddingHorizontal: 16, marginTop: 15 }}>
         {matches.map((match, index) => {
           const status = getStatus(match.status);
-          const playable = Boolean(match.streamUrl || match.playUrl || match.playPath || match.playSource?.[0]?.url);
+          const playable = match.hasStream;
           return (
             <Animated.View
               key={match.id}
@@ -129,13 +178,14 @@ export default function Sports() {
 
               {playable ? (
                 <Pressable
-                  onPress={() => openMatch(match)}
+                  onPress={() => void openMatch(match)}
+                  disabled={openingMatchId === match.id}
                   accessibilityLabel={`Watch ${match.team1?.name} versus ${match.team2?.name}`}
                   style={{ marginHorizontal: 12, marginBottom: 12, minHeight: 42, borderRadius: 13, backgroundColor: 'rgba(228,17,17,.15)', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }}
                 >
                   <Ionicons name="play-circle" size={19} color={colors.primary} />
                   <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>
-                    {status === 'Live' ? 'Watch live' : 'Watch stream'}
+                    {openingMatchId === match.id ? 'Preparing stream…' : status === 'Live' ? 'Watch live' : 'Watch stream'}
                   </Text>
                 </Pressable>
               ) : null}

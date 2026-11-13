@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +23,24 @@ import { useQuery } from '@tanstack/react-query';
 import { parseCaptions, CaptionCue } from '@/lib/subtitles';
 
 const speedSteps = [1, 1.25, 1.5, 1.75, 2];
+
+type PlayerRouteSource = { id: string; title: string; url: string };
+
+function parsePlayerSources(input?: string | string[]): PlayerRouteSource[] {
+  const value = Array.isArray(input) ? input[0] : input;
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((source): source is PlayerRouteSource =>
+        !!source && typeof source.url === 'string' && /^https?:\/\//i.test(source.url),
+      )
+      .slice(0, 6);
+  } catch {
+    return [];
+  }
+}
 
 function formatTime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -61,6 +80,8 @@ export default function Player() {
   const colors = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const isLandscape = viewportWidth > viewportHeight;
   const params = useLocalSearchParams<{
     title?: string;
     url?: string;
@@ -78,8 +99,13 @@ export default function Player() {
     downloadId?: string;
     channelId?: string;
     kind?: string;
+    live?: string;
+    sources?: string | string[];
   }>();
   const initialUrl = String(params.url || '');
+  const mediaKind = String(params.kind || '').toLowerCase();
+  const isLive = params.live === '1' || !!params.channelId || ['live', 'sports', 'iptv', 'globetv', 'pluto'].includes(mediaKind);
+  const routeSources = parsePlayerSources(params.sources);
   const [url, setUrl] = useState(initialUrl);
   const [title] = useState(String(params.title || 'Now playing'));
   const [failure, setFailure] = useState('');
@@ -102,6 +128,15 @@ export default function Player() {
   const [activeAudioId, setActiveAudioId] = useState(String(params.audio || 'auto'));
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const videoViewRef = useRef<VideoView>(null);
+  const activeUrlRef = useRef(url);
+  const routeSourcesRef = useRef(routeSources);
+  const triedSourcesRef = useRef(new Set<string>());
+  activeUrlRef.current = url;
+  routeSourcesRef.current = routeSources;
+
+  const playerSource = (sourceUrl: string) => isLive
+    ? { uri: sourceUrl, contentType: 'hls' as const }
+    : sourceUrl;
 
   useKeepAwake();
 
@@ -143,7 +178,7 @@ export default function Player() {
     return () => { cancelled = true; };
   }, [params.channelId, params.url]);
 
-  const player = useVideoPlayer(url || null, (instance) => {
+  const player = useVideoPlayer(url ? playerSource(url) : null, (instance) => {
     instance.loop = false;
     instance.keepScreenOnWhilePlaying = true;
   });
@@ -156,7 +191,19 @@ export default function Player() {
     });
     const statusSub = player.addListener('statusChange', (event) => {
       setPlayerStatus(event.status);
-      if (event.status === 'error') setFailure(event.error?.message || 'This video could not be played.');
+      if (event.status === 'error') {
+        const failedUrl = activeUrlRef.current;
+        const fallback = routeSourcesRef.current.find(
+          (source) => source.url !== failedUrl && !triedSourcesRef.current.has(source.url),
+        );
+        if (fallback) {
+          triedSourcesRef.current.add(failedUrl);
+          setFailure('');
+          setUrl(fallback.url);
+          return;
+        }
+        setFailure(event.error?.message || 'This video could not be played.');
+      }
     });
     const playSub = player.addListener('playingChange', (event) => setPlaying(event.isPlaying));
     const audioSub = player.addListener('availableAudioTracksChange', (event) => {
@@ -227,8 +274,6 @@ export default function Player() {
 
   const { items: downloadItems, start } = useDownloads();
   const isLocal = params.local === '1';
-  const mediaKind = String(params.kind || '').toLowerCase();
-  const isLive = !!params.channelId || ['live', 'sports', 'iptv', 'pluto'].includes(mediaKind);
   const isPartialDownload = params.partial === '1';
   const activeDownload = downloadItems.find((item) => item.id === String(params.downloadId || ''));
   const subtitleOptions = [...new Map(
@@ -264,6 +309,15 @@ export default function Player() {
   const chooseQuality = (stream: NonNullable<typeof sourceQuery.data>[number]) => {
     setSelectedQuality(stream.quality);
     setUrl(stream.url);
+    setFailure('');
+    setSettingsOpen(false);
+    revealControls();
+  };
+
+  const chooseLiveSource = (source: PlayerRouteSource) => {
+    triedSourcesRef.current.clear();
+    setUrl(source.url);
+    setSelectedQuality('');
     setFailure('');
     setSettingsOpen(false);
     revealControls();
@@ -372,21 +426,25 @@ export default function Player() {
               <Text numberOfLines={1} style={styles.title}>{title}</Text>
               <Text numberOfLines={1} style={styles.subtitle}>{partialStatus}</Text>
             </View>
-            <Pressable onPress={() => { setSettingsOpen(true); revealControls(); }} accessibilityLabel={`Video quality ${selectedQuality || 'automatic'}`} style={styles.qualityBadge}>
-              <Text style={styles.qualityBadgeText}>{selectedQuality ? `${selectedQuality.replace(/p$/i, '')}p` : 'AUTO'}</Text>
+              <Pressable onPress={() => { setSettingsOpen(true); revealControls(); }} accessibilityLabel={`Video quality ${selectedQuality || 'automatic'}`} style={({ pressed }) => [styles.qualityBadge, pressed && styles.pressed]}>
+              <Text style={styles.qualityBadgeText}>
+                {routeSources.length > 1
+                  ? `FEED ${Math.max(1, routeSources.findIndex((source) => source.url === url) + 1)}`
+                  : selectedQuality ? `${selectedQuality.replace(/p$/i, '')}p` : isLive ? 'LIVE' : 'AUTO'}
+              </Text>
             </Pressable>
             <Pressable
               onPress={() => { setSettingsOpen((open) => !open); setControlsVisible(true); }}
               accessibilityLabel="Open playback settings"
               testID="player-settings"
-              style={[styles.iconButton, settingsOpen && styles.iconButtonActive]}
+               style={({ pressed }) => [styles.iconButton, settingsOpen && styles.iconButtonActive, pressed && styles.pressed]}
             >
               <Ionicons name="options-outline" size={19} color="#fff" />
             </Pressable>
           </View>
 
           {settingsOpen ? (
-            <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)} style={styles.settingsPanel}>
+            <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(130)} style={[styles.settingsPanel, isLandscape && styles.settingsPanelLandscape]}>
               <View style={styles.settingsHeader}>
                 <View>
                   <Text style={styles.settingsTitle}>Playback settings</Text>
@@ -397,6 +455,28 @@ export default function Player() {
                 </Pressable>
               </View>
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.settingsContent}>
+                {routeSources.length > 1 ? (
+                  <>
+                    <Text style={styles.settingSection}>STREAM SOURCE</Text>
+                    <View style={styles.choiceWrap}>
+                      {routeSources.map((source, index) => {
+                        const selected = url === source.url;
+                        return (
+                          <Pressable
+                            key={`${source.id}-${source.url}`}
+                            onPress={() => chooseLiveSource(source)}
+                            accessibilityLabel={`Select ${source.title}`}
+                            style={[styles.choicePill, selected && styles.choicePillActive]}
+                          >
+                            <Text style={[styles.choiceLabel, selected && styles.choiceLabelActive]}>
+                              {source.title || `Feed ${index + 1}`}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </>
+                ) : null}
                 <Text style={styles.settingSection}>VIDEO QUALITY</Text>
                 {sourceQuery.data?.length ? (
                   <View style={styles.choiceWrap}>
@@ -476,14 +556,14 @@ export default function Player() {
           <View style={styles.centerControls}>
             {!displayedFailure ? (
               <>
-                <Pressable onPress={() => { player.seekBy(-10); revealControls(); }} accessibilityLabel="Back ten seconds" style={styles.skipButton}>
+                <Pressable onPress={() => { player.seekBy(-10); revealControls(); }} accessibilityLabel="Back ten seconds" style={({ pressed }) => [styles.skipButton, pressed && styles.pressed]}>
                   <Ionicons name="play-back" color="#fff" size={23} />
                   <Text style={styles.skipText}>10</Text>
                 </Pressable>
-                <Pressable onPress={togglePlayback} accessibilityLabel={playing ? 'Pause video' : 'Play video'} testID="player-play-pause" style={styles.playButton}>
+                <Pressable onPress={togglePlayback} accessibilityLabel={playing ? 'Pause video' : 'Play video'} testID="player-play-pause" style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}>
                   <Ionicons name={playing ? 'pause' : 'play'} color="#171719" size={28} />
                 </Pressable>
-                <Pressable onPress={() => { player.seekBy(10); revealControls(); }} accessibilityLabel="Forward ten seconds" style={styles.skipButton}>
+                <Pressable onPress={() => { player.seekBy(10); revealControls(); }} accessibilityLabel="Forward ten seconds" style={({ pressed }) => [styles.skipButton, pressed && styles.pressed]}>
                   <Ionicons name="play-forward" color="#fff" size={23} />
                   <Text style={styles.skipText}>10</Text>
                 </Pressable>
@@ -492,7 +572,7 @@ export default function Player() {
               <View style={styles.errorCard}>
                 <Ionicons name="alert-circle-outline" color="#fff" size={25} />
                 <Text style={styles.errorTitle}>{displayedFailure}</Text>
-                <Pressable onPress={() => { setFailure(''); if (url) player.replace(url); }} style={[styles.retryButton, { backgroundColor: colors.primary }]}>
+                <Pressable onPress={() => { triedSourcesRef.current.clear(); setFailure(''); if (url) player.replace(playerSource(url)); }} style={[styles.retryButton, { backgroundColor: colors.primary }]}>
                   <Text style={styles.retryLabel}>{isPartialDownload ? 'Retry downloaded part' : 'Reload video'}</Text>
                 </Pressable>
               </View>
@@ -510,11 +590,11 @@ export default function Player() {
                     accessibilityRole="adjustable"
                     accessibilityLabel="Video progress"
                     onPress={(event) => seekTo(event.nativeEvent.locationX)}
-                    style={styles.progressTrack}
+                    style={({ pressed }) => [styles.progressTrack, pressed && styles.progressTrackPressed]}
                   >
                     <View style={[styles.bufferedTrack, { width: `${bufferedProgress * 100}%` }]} />
                     <View style={[styles.progressFill, { width: `${progress * 100}%`, backgroundColor: colors.primary }]} />
-                    <View style={[styles.progressThumb, { left: `${progress * 100}%`, borderColor: colors.primary }]} />
+                    <View style={[styles.progressThumb, { left: `${progress * 100}%`, borderColor: colors.primary, backgroundColor: colors.primary }]} />
                   </Pressable>
                 </View>
                 <View style={styles.timeRow}>
@@ -562,51 +642,54 @@ export default function Player() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#050506', justifyContent: 'center' },
   chrome: { ...StyleSheet.absoluteFill, justifyContent: 'space-between' },
-  topFade: { position: 'absolute', top: 0, left: 0, right: 0, height: 220 },
-  bottomFade: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 260 },
-  closeButton: { position: 'absolute', left: 18, width: 42, height: 42, zIndex: 12, borderRadius: 22, backgroundColor: 'rgba(16,17,19,.74)', borderWidth: 1, borderColor: 'rgba(255,255,255,.2)', alignItems: 'center', justifyContent: 'center' },
+  topFade: { position: 'absolute', top: 0, left: 0, right: 0, height: 230 },
+  bottomFade: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 275 },
+  closeButton: { position: 'absolute', left: 18, width: 42, height: 42, zIndex: 12, borderRadius: 22, backgroundColor: 'rgba(24,26,30,.68)', borderWidth: 1, borderColor: 'rgba(255,255,255,.24)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: .3, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
   topBar: { paddingHorizontal: 18, paddingLeft: 72, paddingBottom: 14, flexDirection: 'row', alignItems: 'center', gap: 9 },
   titleWrap: { flex: 1, minWidth: 0 },
   title: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 15 },
-  subtitle: { color: 'rgba(255,255,255,.64)', fontFamily: 'Outfit_500Medium', fontSize: 8, letterSpacing: 1, marginTop: 4 },
-  iconButton: { width: 40, height: 40, borderRadius: 21, backgroundColor: 'rgba(255,255,255,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)', alignItems: 'center', justifyContent: 'center' },
-  iconButtonActive: { backgroundColor: 'rgba(228,17,17,.42)', borderColor: 'rgba(255,255,255,.32)' },
-  qualityBadge: { minWidth: 44, height: 36, paddingHorizontal: 9, borderRadius: 12, backgroundColor: 'rgba(255,255,255,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.14)', alignItems: 'center', justifyContent: 'center' },
-  qualityBadgeText: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 10, letterSpacing: .5 },
-  settingsPanel: { position: 'absolute', right: 16, bottom: 104, width: '86%', maxWidth: 360, maxHeight: '62%', overflow: 'hidden', borderRadius: 22, backgroundColor: 'rgba(17,18,21,.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,.17)', zIndex: 9, shadowColor: '#000', shadowOpacity: .42, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 18 },
-  settingsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 15, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,.1)' },
+  subtitle: { color: 'rgba(242,239,232,.66)', fontFamily: 'Outfit_500Medium', fontSize: 8, letterSpacing: 1.15, marginTop: 4 },
+  iconButton: { width: 42, height: 42, borderRadius: 22, backgroundColor: 'rgba(235,238,242,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.21)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: .24, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
+  iconButtonActive: { backgroundColor: 'rgba(228,17,17,.42)', borderColor: 'rgba(255,255,255,.38)' },
+  qualityBadge: { minWidth: 48, height: 36, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(235,238,242,.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,.22)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: .2, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  qualityBadgeText: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 10, letterSpacing: .7 },
+  settingsPanel: { position: 'absolute', right: 16, bottom: 104, width: '86%', maxWidth: 360, maxHeight: '62%', overflow: 'hidden', borderRadius: 24, backgroundColor: 'rgba(23,25,29,.91)', borderWidth: 1, borderColor: 'rgba(255,255,255,.22)', zIndex: 9, shadowColor: '#000', shadowOpacity: .52, shadowRadius: 28, shadowOffset: { width: 0, height: 14 }, elevation: 18 },
+  settingsPanelLandscape: { width: 344, maxHeight: '76%', bottom: 78 },
+  settingsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 17, paddingTop: 16, paddingBottom: 13, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,.12)', backgroundColor: 'rgba(255,255,255,.035)' },
   settingsTitle: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 14 },
-  settingsSubtitle: { color: 'rgba(255,255,255,.5)', fontFamily: 'Outfit_400Regular', fontSize: 10, marginTop: 3 },
-  settingsClose: { width: 31, height: 31, borderRadius: 16, backgroundColor: 'rgba(255,255,255,.12)', alignItems: 'center', justifyContent: 'center' },
-  settingsContent: { paddingHorizontal: 15, paddingTop: 5, paddingBottom: 16 },
-  settingSection: { color: 'rgba(255,255,255,.52)', fontFamily: 'Outfit_700Bold', fontSize: 9, letterSpacing: 1.15, marginTop: 15, marginBottom: 8 },
+  settingsSubtitle: { color: 'rgba(255,255,255,.58)', fontFamily: 'Outfit_400Regular', fontSize: 10, marginTop: 3 },
+  settingsClose: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', alignItems: 'center', justifyContent: 'center' },
+  settingsContent: { paddingHorizontal: 15, paddingTop: 5, paddingBottom: 18 },
+  settingSection: { color: 'rgba(244,224,204,.72)', fontFamily: 'Outfit_700Bold', fontSize: 9, letterSpacing: 1.35, marginTop: 16, marginBottom: 9 },
   choiceWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  choicePill: { minHeight: 31, paddingHorizontal: 11, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,.15)', backgroundColor: 'rgba(255,255,255,.07)', alignItems: 'center', justifyContent: 'center' },
-  choicePillActive: { backgroundColor: 'rgba(228,17,17,.2)', borderColor: 'rgba(228,17,17,.8)' },
-  choiceLabel: { color: 'rgba(255,255,255,.77)', fontFamily: 'Outfit_500Medium', fontSize: 10 },
+  choicePill: { minHeight: 34, paddingHorizontal: 12, borderRadius: 17, borderWidth: 1, borderColor: 'rgba(255,255,255,.16)', backgroundColor: 'rgba(255,255,255,.065)', alignItems: 'center', justifyContent: 'center' },
+  choicePillActive: { backgroundColor: 'rgba(228,17,17,.24)', borderColor: 'rgba(255,255,255,.58)', shadowColor: '#e41111', shadowOpacity: .16, shadowRadius: 8, elevation: 2 },
+  choiceLabel: { color: 'rgba(255,255,255,.82)', fontFamily: 'Outfit_500Medium', fontSize: 10 },
   choiceLabelActive: { color: '#fff', fontFamily: 'Outfit_700Bold' },
-  settingOption: { minHeight: 37, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 10, borderRadius: 10 },
+  settingOption: { minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 11, borderRadius: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,.055)' },
   settingOptionLabel: { color: '#fff', fontFamily: 'Outfit_500Medium', fontSize: 11 },
-  settingsHint: { color: 'rgba(255,255,255,.48)', fontFamily: 'Outfit_400Regular', fontSize: 10, lineHeight: 15, marginHorizontal: 10, marginTop: 3 },
+  settingsHint: { color: 'rgba(255,255,255,.54)', fontFamily: 'Outfit_400Regular', fontSize: 10, lineHeight: 15, marginHorizontal: 10, marginTop: 3 },
   volumeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 5, paddingVertical: 2 },
-  volumeButton: { width: 31, height: 31, borderRadius: 16, backgroundColor: 'rgba(255,255,255,.1)', alignItems: 'center', justifyContent: 'center' },
-  volumeTrack: { flex: 1, height: 4, borderRadius: 3, backgroundColor: 'rgba(255,255,255,.18)', overflow: 'hidden' },
+  volumeButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,.1)', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', alignItems: 'center', justifyContent: 'center' },
+  volumeTrack: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,.2)', overflow: 'hidden' },
   volumeFill: { height: '100%', borderRadius: 3 },
-  centerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36 },
-  skipButton: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(17,18,21,.43)', borderWidth: 1, borderColor: 'rgba(255,255,255,.14)', alignItems: 'center', justifyContent: 'center' },
-  skipText: { color: '#fff', fontSize: 9, fontFamily: 'Outfit_600SemiBold', marginTop: -3 },
-  playButton: { width: 72, height: 72, borderRadius: 38, backgroundColor: '#fff', borderWidth: 4, borderColor: 'rgba(255,255,255,.32)', alignItems: 'center', justifyContent: 'center', paddingLeft: 2, shadowColor: '#000', shadowOpacity: .45, shadowRadius: 20, elevation: 10 },
-  bottomBar: { paddingHorizontal: 18, paddingTop: 24 },
-  progressTouchArea: { height: 25, justifyContent: 'center' },
-  progressTrack: { height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.25)', overflow: 'visible' },
-  bufferedTrack: { position: 'absolute', top: 0, left: 0, height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.46)' },
+  centerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 30 },
+  skipButton: { width: 58, height: 58, borderRadius: 29, backgroundColor: 'rgba(29,31,35,.66)', borderWidth: 1, borderColor: 'rgba(255,255,255,.23)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: .32, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
+  skipText: { color: '#fff', fontSize: 9, fontFamily: 'Outfit_600SemiBold', marginTop: -3, textShadowColor: 'rgba(0,0,0,.5)', textShadowRadius: 3 },
+  playButton: { width: 76, height: 76, borderRadius: 40, backgroundColor: 'rgba(248,246,240,.96)', borderWidth: 5, borderColor: 'rgba(255,255,255,.34)', alignItems: 'center', justifyContent: 'center', paddingLeft: 2, shadowColor: '#000', shadowOpacity: .48, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 11 },
+  pressed: { transform: [{ scale: .94 }], opacity: .86 },
+  bottomBar: { paddingHorizontal: 18, paddingTop: 22 },
+  progressTouchArea: { height: 30, justifyContent: 'center' },
+  progressTrack: { height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.3)', overflow: 'visible' },
+  progressTrackPressed: { height: 6 },
+  bufferedTrack: { position: 'absolute', top: 0, left: 0, height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.5)' },
   progressFill: { position: 'absolute', top: 0, left: 0, height: 4, borderRadius: 4 },
-  progressThumb: { position: 'absolute', top: -4, width: 12, height: 12, marginLeft: -6, borderRadius: 7, backgroundColor: '#fff', borderWidth: 2 },
-  timeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 },
-  timeLabel: { color: 'rgba(255,255,255,.82)', fontFamily: 'Outfit_500Medium', fontSize: 11 },
-  downloadButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 15, backgroundColor: 'rgba(255,255,255,.12)' },
+  progressThumb: { position: 'absolute', top: -5, width: 14, height: 14, marginLeft: -7, borderRadius: 7, borderWidth: 2, shadowColor: '#fff', shadowOpacity: .35, shadowRadius: 5, elevation: 3 },
+  timeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 5, gap: 8 },
+  timeLabel: { color: 'rgba(255,255,255,.9)', fontFamily: 'Outfit_600SemiBold', fontSize: 11, fontVariant: ['tabular-nums'] },
+  downloadButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 15, backgroundColor: 'rgba(255,255,255,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.13)' },
   downloadLabel: { color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 10 },
-  actionButton: { width: 32, height: 32, borderRadius: 17, backgroundColor: 'rgba(255,255,255,.13)', alignItems: 'center', justifyContent: 'center' },
+  actionButton: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(235,238,242,.13)', borderWidth: 1, borderColor: 'rgba(255,255,255,.14)', alignItems: 'center', justifyContent: 'center' },
   liveRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   liveDot: { width: 7, height: 7, borderRadius: 4 },
   liveLabel: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 11, letterSpacing: 1 },
