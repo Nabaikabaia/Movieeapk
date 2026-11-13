@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   PanResponder,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -27,7 +28,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { GENRES, MOVIE_CATEGORIES } from '@/lib/catalog';
-import { findMovies, getMovies, Movie } from '@/lib/providers';
+import { findMovies, getMovies, isAdultContent, Movie } from '@/lib/providers';
 import { useUserPreferences } from '@/lib/UserPreferences';
 import { Problem, Rail, RailSkeleton } from '@/lib/ui';
 
@@ -160,7 +161,8 @@ export default function Home() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { preferences } = useUserPreferences();
+  const { preferences, isReady, setAppTourComplete } = useUserPreferences();
+  const [tourStep, setTourStep] = useState(0);
   const { width: screenWidth } = useWindowDimensions();
   const [activeCategoryCount, setActiveCategoryCount] = useState(3);
   const [carouselPosition, setCarouselPosition] = useState(0);
@@ -193,12 +195,13 @@ export default function Home() {
     return categoryQueries.flatMap((query) => query.data || [])
       .filter((movie) => {
         const id = String(movie.subjectId);
+        if (preferences.parentalControlsEnabled && isAdultContent(movie)) return false;
         if (!(movie.cover?.url || movie.coverUrl || movie.poster) || seen.has(id)) return false;
         seen.add(id);
         return true;
       })
       .slice(0, 8);
-  }, [categoryQueries]);
+  }, [categoryQueries, preferences.parentalControlsEnabled]);
   const carouselIndex = heroSlides.length
     ? ((carouselPosition % heroSlides.length) + heroSlides.length) % heroSlides.length
     : 0;
@@ -207,11 +210,11 @@ export default function Home() {
     const seen = new Set<string>();
     return preferredGenreQueries.flatMap((query) => query.data || []).filter((movie) => {
       const id = String(movie.subjectId);
-      if (!id || seen.has(id)) return false;
+      if (!id || (preferences.parentalControlsEnabled && isAdultContent(movie)) || seen.has(id)) return false;
       seen.add(id);
       return true;
     });
-  }, [preferredGenreQueries]);
+  }, [preferredGenreQueries, preferences.parentalControlsEnabled]);
 
   const unlockCarousel = useCallback(() => { carouselTransitioning.current = false; }, []);
   const settleCarouselCard = useCallback((nextIndex: number) => {
@@ -263,9 +266,13 @@ export default function Home() {
     }
   };
   const homeCategoryItems = (index: number): Movie[] => {
-    return categoryQueries[index]?.data || [];
+    return (categoryQueries[index]?.data || []).filter((movie) => (
+      !preferences.parentalControlsEnabled || !isAdultContent(movie)
+    ));
   };
-  const hasCatalogData = categoryQueries.some((query) => !!query.data?.length);
+  const hasCatalogData = categoryQueries.some((query) => (
+    query.data?.some((movie) => !preferences.parentalControlsEnabled || !isAdultContent(movie))
+  ));
   const loadingCatalog = categoryQueries.slice(0, activeCategoryCount).some((query) => query.isFetching);
   const activeQueries = categoryQueries.slice(0, activeCategoryCount);
   const allCatalogRequestsFailed = activeQueries.length > 0 && activeQueries.every((query) => query.isError);
@@ -276,22 +283,25 @@ export default function Home() {
     router.push({ pathname: '/(tabs)/discover', params: { genre: slug } } as any);
   const openCategory = (slug: string) =>
     router.push({ pathname: '/(tabs)/discover', params: { slug } } as any);
+  const showFirstRunTour = isReady && preferences.onboardingComplete && !preferences.appTourComplete;
+  const finishTour = () => setAppTourComplete(true);
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      refreshControl={
-        <RefreshControl
-          refreshing={categoryQueries.some((query) => query.isRefetching)}
-          onRefresh={() => void refreshCatalog()}
-          tintColor={colors.primary}
-        />
-      }
-      contentContainerStyle={{ paddingBottom: 120 }}
-      showsVerticalScrollIndicator={false}
-      onScroll={loadVisibleCategories}
-      scrollEventThrottle={240}
-    >
+    <>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.background }}
+        refreshControl={
+          <RefreshControl
+            refreshing={categoryQueries.some((query) => query.isRefetching)}
+            onRefresh={() => void refreshCatalog()}
+            tintColor={colors.primary}
+          />
+        }
+        contentContainerStyle={{ paddingBottom: 120 }}
+        showsVerticalScrollIndicator={false}
+        onScroll={loadVisibleCategories}
+        scrollEventThrottle={240}
+      >
       <View
         style={{
           paddingTop: insets.top + 10,
@@ -516,7 +526,7 @@ export default function Home() {
 
       {MOVIE_CATEGORIES.map((category, index) => {
         const items = homeCategoryItems(index);
-        if (!categoryQueries[index]?.isError && !items.length) {
+        if (!categoryQueries[index]?.isError && !categoryQueries[index]?.data) {
           return (
             <View key={category.slug} onLayout={(event) => { categoryOffsets.current[index] = event.nativeEvent.layout.y; }}>
               <RailSkeleton title={category.title} />
@@ -530,6 +540,65 @@ export default function Home() {
           </View>
         );
       })}
-    </ScrollView>
+      </ScrollView>
+      <Modal
+        visible={showFirstRunTour}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={finishTour}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,.78)' }}>
+          <View style={{ position: 'absolute', left: 0, right: 0, bottom: insets.bottom + 76, alignItems: 'center' }}>
+            <View style={{ width: 1, height: 24, backgroundColor: 'rgba(255,255,255,.55)' }} />
+            <View style={{ width: 8, height: 8, borderRadius: 5, backgroundColor: colors.primary, marginTop: -2 }} />
+          </View>
+          <Animated.View
+            key={`tour-${tourStep}`}
+            entering={FadeInDown.duration(250)}
+            style={{ marginHorizontal: 17, marginBottom: insets.bottom + 91, padding: 18, borderRadius: 23, backgroundColor: 'rgba(24,24,27,.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,.18)' }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 4, backgroundColor: colors.primary }} />
+                <Text style={{ color: colors.primary, fontFamily: 'Outfit_700Bold', fontSize: 9, letterSpacing: 1.5 }}>
+                  QUICK TOUR · {tourStep + 1} OF 2
+                </Text>
+              </View>
+              <Pressable onPress={finishTour} accessibilityRole="button" accessibilityLabel="Skip the app tour" testID="tour-skip">
+                <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_500Medium', fontSize: 11 }}>Skip</Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14 }}>
+              <View style={{ width: 43, height: 43, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(228,17,17,.14)' }}>
+                <Ionicons name={tourStep === 0 ? 'ellipsis-horizontal-circle-outline' : 'person-circle-outline'} size={22} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 16 }}>
+                  {tourStep === 0 ? 'More lives here' : 'Me is your control room'}
+                </Text>
+                <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_400Regular', fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+                  {tourStep === 0
+                    ? 'Search, downloads, IPTV, Pluto TV and videos on your device are all one tap away.'
+                    : 'Choose your genres, control adult suggestions, set download rules and manage alerts.'}
+                </Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 }}>
+              <Pressable
+                onPress={() => tourStep === 0 ? setTourStep(1) : finishTour()}
+                accessibilityRole="button"
+                accessibilityLabel={tourStep === 0 ? 'Show Me settings tip' : 'Finish the app tour'}
+                testID="tour-next"
+                style={({ pressed }) => ({ minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 16, borderRadius: 15, backgroundColor: colors.primary, opacity: pressed ? 0.8 : 1 })}
+              >
+                <Text style={{ color: colors.primaryForeground, fontFamily: 'Outfit_700Bold', fontSize: 12 }}>{tourStep === 0 ? 'Next' : 'Start exploring'}</Text>
+                <Ionicons name={tourStep === 0 ? 'arrow-forward' : 'checkmark'} size={15} color={colors.primaryForeground} />
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
+    </>
   );
 }

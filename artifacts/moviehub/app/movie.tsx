@@ -24,10 +24,11 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
-import { AudioOption, getDetails, getRecommendations, getStreams, getSubtitles, Movie, Stream } from '@/lib/providers';
+import { AudioOption, getDetails, getRecommendations, getStreams, getSubtitles, isAdultContent, Movie, Stream } from '@/lib/providers';
 import { PlaybackOptionsPanel, PlaybackSeason } from '@/components/PlaybackOptionsPanel';
 import { useFavorites } from '@/lib/Favorites';
 import { useDownloads } from '@/lib/Downloads';
+import { useUserPreferences } from '@/lib/UserPreferences';
 import { useWatchHistory } from '@/lib/WatchHistory';
 import { Loading, Problem, Rail } from '@/lib/ui';
 
@@ -142,6 +143,7 @@ export default function MovieDetails() {
   const { items: favorites, toggle } = useFavorites();
   const { start: startDownload, canStart: canStartDownload } = useDownloads();
   const { record: recordWatch } = useWatchHistory();
+  const { preferences } = useUserPreferences();
   const isFavorite = favorites.some((item) => item.subjectId === subject?.subjectId);
   const sourceQuery = useQuery({
     queryKey: ['movie-api-source', playbackSubject?.subjectId, playbackSubject?.detailPath, sourceSeason, sourceEpisode],
@@ -158,6 +160,9 @@ export default function MovieDetails() {
     enabled: !!subject?.subjectId,
     staleTime: 300_000,
   });
+  const recommendationItems = (recommendationsQuery.data || []).filter((movie) => (
+    !preferences.parentalControlsEnabled || !isAdultContent(movie)
+  ));
   const directEpisodes = details?.resource?.episodes || details?.episodes;
   const rawSeasons = details?.resource?.seasons?.length
     ? details.resource.seasons
@@ -660,9 +665,9 @@ export default function MovieDetails() {
         </View>
       ) : null}
 
-      {recommendationsQuery.data?.length ? (
+      {recommendationItems.length ? (
         <View style={{ marginTop: 25 }}>
-          <Rail title="You might also like" items={recommendationsQuery.data} onMovie={openRecommendation} />
+          <Rail title="You might also like" items={recommendationItems} onMovie={openRecommendation} />
         </View>
       ) : null}
     </ScrollView>

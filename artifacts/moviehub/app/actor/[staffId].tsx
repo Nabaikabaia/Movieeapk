@@ -7,9 +7,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
-import { getStaffFilmography } from '@/lib/providers';
+import { getStaffFilmography, isAdultContent } from '@/lib/providers';
 import { Empty, Loading, Problem } from '@/lib/ui';
 import type { Movie } from '@/lib/providers';
+import { useUserPreferences } from '@/lib/UserPreferences';
 
 function firstParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -19,6 +20,7 @@ export default function ActorFilmography() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { preferences } = useUserPreferences();
   const params = useLocalSearchParams<{ staffId?: string | string[]; name?: string | string[]; avatarUrl?: string | string[]; character?: string | string[] }>();
   const staffId = firstParam(params.staffId);
   const name = firstParam(params.name) || 'Actor';
@@ -32,7 +34,8 @@ export default function ActorFilmography() {
     enabled: !!staffId,
     staleTime: 10 * 60 * 1000,
   });
-  const movies: Movie[] = filmography.data?.pages.flatMap((page) => page.items) || [];
+  const movies: Movie[] = (filmography.data?.pages.flatMap((page) => page.items) || [])
+    .filter((movie) => !preferences.parentalControlsEnabled || !isAdultContent(movie));
   const total = filmography.data?.pages[0]?.totalCount || movies.length;
 
   const openMovie = (movie: Movie) => router.push({

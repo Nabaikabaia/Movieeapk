@@ -7,6 +7,9 @@ export type UserPreferences = {
   downloadNetwork: DownloadNetworkPolicy;
   preferredGenres: string[];
   downloadCompleteNotifications: boolean;
+  parentalControlsEnabled: boolean;
+  onboardingComplete: boolean;
+  appTourComplete: boolean;
 };
 
 type PreferencesContextValue = {
@@ -15,6 +18,9 @@ type PreferencesContextValue = {
   setDownloadNetwork: (policy: DownloadNetworkPolicy) => void;
   togglePreferredGenre: (genre: string) => void;
   setDownloadCompleteNotifications: (enabled: boolean) => void;
+  setParentalControlsEnabled: (enabled: boolean) => void;
+  setOnboardingComplete: (complete: boolean) => void;
+  setAppTourComplete: (complete: boolean) => void;
 };
 
 const STORAGE_KEY = 'moviehub-user-preferences-v1';
@@ -22,6 +28,9 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   downloadNetwork: 'any',
   preferredGenres: [],
   downloadCompleteNotifications: false,
+  parentalControlsEnabled: true,
+  onboardingComplete: false,
+  appTourComplete: false,
 };
 
 const PreferencesContext = createContext<PreferencesContextValue | null>(null);
@@ -46,6 +55,9 @@ export function UserPreferencesProvider({ children }: { children: React.ReactNod
             ? parsed.preferredGenres.filter((genre): genre is string => typeof genre === 'string')
             : [],
           downloadCompleteNotifications: parsed.downloadCompleteNotifications === true,
+          parentalControlsEnabled: parsed.parentalControlsEnabled !== false,
+          onboardingComplete: parsed.onboardingComplete === true,
+          appTourComplete: parsed.appTourComplete === true,
         });
       }
     }).catch(() => undefined).finally(() => {
@@ -77,13 +89,37 @@ export function UserPreferencesProvider({ children }: { children: React.ReactNod
     setPreferences((current) => ({ ...current, downloadCompleteNotifications }));
   }, []);
 
+  const setParentalControlsEnabled = useCallback((parentalControlsEnabled: boolean) => {
+    setPreferences((current) => ({ ...current, parentalControlsEnabled }));
+  }, []);
+
+  const setOnboardingComplete = useCallback((onboardingComplete: boolean) => {
+    setPreferences((current) => ({ ...current, onboardingComplete }));
+  }, []);
+
+  const setAppTourComplete = useCallback((appTourComplete: boolean) => {
+    setPreferences((current) => ({ ...current, appTourComplete }));
+  }, []);
+
   const value = useMemo(() => ({
     preferences,
     isReady,
     setDownloadNetwork,
     togglePreferredGenre,
     setDownloadCompleteNotifications,
-  }), [preferences, isReady, setDownloadNetwork, togglePreferredGenre, setDownloadCompleteNotifications]);
+    setParentalControlsEnabled,
+    setOnboardingComplete,
+    setAppTourComplete,
+  }), [
+    preferences,
+    isReady,
+    setDownloadNetwork,
+    togglePreferredGenre,
+    setDownloadCompleteNotifications,
+    setParentalControlsEnabled,
+    setOnboardingComplete,
+    setAppTourComplete,
+  ]);
 
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }

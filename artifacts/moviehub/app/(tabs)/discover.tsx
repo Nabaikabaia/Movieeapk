@@ -8,7 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
 import { GENRES, MOVIE_CATEGORIES } from '@/lib/catalog';
-import { findMoviesPage, getMoviesPage, Movie } from '@/lib/providers';
+import { findMoviesPage, getMoviesPage, isAdultContent, Movie } from '@/lib/providers';
+import { useUserPreferences } from '@/lib/UserPreferences';
 import { Empty, Loading, Problem } from '@/lib/ui';
 
 const PAGE_SIZE = 20;
@@ -22,6 +23,7 @@ export default function Discover() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { preferences } = useUserPreferences();
   const params = useLocalSearchParams<{ slug?: string | string[]; genre?: string | string[] }>();
   const [selected, setSelected] = useState<BrowseFilter>(() => ({
     kind: firstParam(params.genre) ? 'genre' : 'category',
@@ -54,13 +56,18 @@ export default function Discover() {
       return Array.isArray((page as any)?.items) ? (page as any).items as Movie[] : [];
     });
     return pageItems.filter((movie): movie is Movie => {
-      if (!movie || typeof movie !== 'object' || movie.subjectId == null) return false;
+      if (
+        !movie
+        || typeof movie !== 'object'
+        || movie.subjectId == null
+        || (preferences.parentalControlsEnabled && isAdultContent(movie))
+      ) return false;
       const id = String(movie.subjectId);
       if (!id || seen.has(id)) return false;
       seen.add(id);
       return true;
     });
-  }, [query.data?.pages]);
+  }, [preferences.parentalControlsEnabled, query.data?.pages]);
   const title = genre?.label || category?.title || 'Popular';
 
   const selectCategory = (slug: string) => setSelected({ kind: 'category', slug });

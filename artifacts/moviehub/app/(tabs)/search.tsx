@@ -14,7 +14,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
-import { findMovies, getMovies, Movie } from '@/lib/providers';
+import { findMovies, getMovies, isAdultContent, Movie } from '@/lib/providers';
+import { useUserPreferences } from '@/lib/UserPreferences';
 import { Empty, Poster, Problem } from '@/lib/ui';
 
 const TRENDING_SEARCHES = ['Action', 'K-Drama', 'Anime', 'Nollywood', 'Romance', 'Sci-Fi', 'Thriller', 'Comedy'];
@@ -23,6 +24,7 @@ export default function Search() {
   const colors = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { preferences } = useUserPreferences();
   const [text, setText] = useState('');
   const [term, setTerm] = useState('');
 
@@ -58,11 +60,17 @@ export default function Search() {
   const matchingTrending = showSearchSuggestions
     ? TRENDING_SEARCHES.filter((query) => query.toLowerCase().includes(typedText.toLowerCase())).slice(0, 4)
     : [];
-  const remoteSuggestions = suggestionsAreCurrent ? (results.data || []).slice(0, 5) : [];
+  const filteredResults = (results.data || []).filter((movie) => (
+    !preferences.parentalControlsEnabled || !isAdultContent(movie)
+  ));
+  const filteredPopular = (popular.data || []).filter((movie) => (
+    !preferences.parentalControlsEnabled || !isAdultContent(movie)
+  ));
+  const remoteSuggestions = suggestionsAreCurrent ? filteredResults.slice(0, 5) : [];
   const suggestionItems = remoteSuggestions.length
     ? remoteSuggestions
     : matchingTrending.map((title) => ({ title, subjectId: '' } as Movie));
-  const resultItems = suggestionsAreCurrent ? results.data || [] : [];
+  const resultItems = suggestionsAreCurrent ? filteredResults : [];
   const waitingForCurrentTerm = showResults && !suggestionsAreCurrent;
 
   return (
@@ -142,9 +150,9 @@ export default function Search() {
               </View>
               {popular.isError ? (
                 <Problem message="Popular titles are temporarily unavailable." retry={() => void popular.refetch()} />
-              ) : popular.data?.length ? (
+              ) : filteredPopular.length ? (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
-                  {popular.data.slice(0, 12).map((movie) => (
+                  {filteredPopular.slice(0, 12).map((movie) => (
                     <Poster key={movie.subjectId} movie={movie} width={112} onPress={() => openMovie(movie)} />
                   ))}
                 </ScrollView>

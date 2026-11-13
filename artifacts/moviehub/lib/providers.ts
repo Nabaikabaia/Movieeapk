@@ -25,6 +25,42 @@ export type Movie = {
   imdbRatingValue?: string;
   [key: string]: any;
 };
+
+const ADULT_CONTENT_TERMS = /\b(adult|erotic|porn(?:ographic)?|xxx|hentai|explicit|sex(?:ual)?|uncensored|uncut)\b/i;
+
+/**
+ * The catalog sometimes returns isPornographic: false even on titles tagged
+ * with Adult/Erotic genres, so check both explicit flags and descriptive tags.
+ */
+export function isAdultContent(movie: Movie | Record<string, any> | null | undefined): boolean {
+  if (!movie) return false;
+  const flags = [
+    movie.isPornographic,
+    movie.isAdult,
+    movie.adult,
+    movie.webHighRisk,
+    movie.isExplicit,
+  ];
+  if (flags.some((flag) => flag === true || flag === 1 || flag === 'true')) return true;
+
+  const metadata = [
+    movie.genre,
+    movie.genres,
+    movie.tags,
+    movie.categories,
+    movie.contentRating,
+    movie.ageRating,
+    movie.ratingLabel,
+    movie.title,
+    movie.description,
+    movie.postTitle,
+  ].flatMap((value) => Array.isArray(value)
+    ? value.map((item) => typeof item === 'string' ? item : item?.name || item?.label || '')
+    : [typeof value === 'string' ? value : ''])
+    .join(' ');
+
+  return ADULT_CONTENT_TERMS.test(metadata);
+}
 export type AudioOption = {
   id: string;
   language: string;
@@ -161,12 +197,14 @@ export async function getRecommendations(id: string, detailData?: any): Promise<
   try {
     const d = detailData || await getDetails(id);
     const fromDetails = (d.you_may_also_like || d.subject?.you_may_also_like || []).map((m: any) => ({
+      ...m,
       subjectId: m.subjectId,
       title: m.title,
       cover: m.cover,
       subjectType: m.type || 1,
       detailPath: m.detailPath,
       imdbRatingValue: m.imdbRating,
+      genre: m.genre || m.subject?.genre,
     }));
     if (fromDetails.length) return fromDetails;
     const genre = String(d.subject?.genre || '').split(',')[0].trim();

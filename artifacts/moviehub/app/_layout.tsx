@@ -51,6 +51,8 @@ if (Platform.OS !== 'web') {
 function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerShown: false, headerBackTitle: 'Back', animation: 'slide_from_right', animationDuration: 340, gestureEnabled: true, contentStyle: { backgroundColor: '#0A0A0A' } }}>
+      <Stack.Screen name="index" options={{ animation: 'fade', animationDuration: 280, gestureEnabled: false }} />
+      <Stack.Screen name="onboarding" options={{ animation: 'fade', animationDuration: 320, gestureEnabled: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
     </Stack>
   );

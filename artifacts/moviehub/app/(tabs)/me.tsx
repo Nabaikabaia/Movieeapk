@@ -18,53 +18,18 @@ const NETWORK_CHOICES: Array<{ value: DownloadNetworkPolicy; label: string; icon
   { value: 'cellular', label: 'Mobile data only', icon: 'cellular-outline' },
 ];
 
-function MoreRow({
-  icon,
-  title,
-  subtitle,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  subtitle: string;
-  onPress: () => void;
-}) {
-  const colors = useColors();
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${title}. ${subtitle}`}
-      testID={`more-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-      style={({ pressed }) => ({
-        minHeight: 62,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        paddingHorizontal: 12,
-        borderRadius: 16,
-        backgroundColor: pressed ? colors.secondary : colors.card,
-        borderWidth: 1,
-        borderColor: colors.border,
-      })}
-    >
-      <View style={{ width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.secondary }}>
-        <Ionicons name={icon} size={18} color={colors.primary} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 13 }}>{title}</Text>
-        <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 3 }}>{subtitle}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={17} color={colors.mutedForeground} />
-    </Pressable>
-  );
-}
-
 export default function Me() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { preferences, isReady, setDownloadNetwork, togglePreferredGenre, setDownloadCompleteNotifications } = useUserPreferences();
+  const {
+    preferences,
+    isReady,
+    setDownloadNetwork,
+    togglePreferredGenre,
+    setDownloadCompleteNotifications,
+    setParentalControlsEnabled,
+  } = useUserPreferences();
   const { items: favorites } = useFavorites();
   const { items: downloads } = useDownloads();
   const { items: watchHistory } = useWatchHistory();
@@ -254,6 +219,39 @@ export default function Me() {
         </View>
       </View>
 
+      <View style={{ marginTop: 24, flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 17, backgroundColor: colors.card, borderWidth: 1, borderColor: preferences.parentalControlsEnabled ? 'rgba(228,17,17,.3)' : colors.border }}>
+        <View style={{ width: 39, height: 39, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: preferences.parentalControlsEnabled ? 'rgba(228,17,17,.14)' : colors.secondary }}>
+          <Ionicons name={preferences.parentalControlsEnabled ? 'shield-checkmark-outline' : 'shield-outline'} size={19} color={preferences.parentalControlsEnabled ? colors.primary : colors.mutedForeground} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 13 }}>Parental controls</Text>
+          <Text style={{ color: colors.mutedForeground, fontSize: 10, lineHeight: 15, marginTop: 3 }}>
+            {preferences.parentalControlsEnabled
+              ? 'Adult and erotic titles are hidden from suggestions.'
+              : 'Adult titles may appear in suggestions.'}
+          </Text>
+        </View>
+        <Switch
+          value={preferences.parentalControlsEnabled}
+          onValueChange={setParentalControlsEnabled}
+          disabled={!isReady}
+          trackColor={{ false: colors.border, true: colors.primary }}
+          thumbColor={colors.foreground}
+          accessibilityLabel="Parental controls"
+          testID="parental-controls-toggle"
+        />
+      </View>
+
+      <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 13, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}>
+        <Ionicons name="cloud-download-outline" size={18} color={colors.primary} style={{ marginTop: 1 }} />
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>Downloads continue in the background</Text>
+          <Text style={{ color: colors.mutedForeground, fontSize: 10, lineHeight: 15, marginTop: 4 }}>
+            Android does not need a separate permission for background transfers. Allow notifications below if you want a completion alert.
+          </Text>
+        </View>
+      </View>
+
       <View style={{ marginTop: 26, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 13, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}>
         <View style={{ flex: 1 }}>
           <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 13 }}>Download complete alerts</Text>
@@ -271,18 +269,6 @@ export default function Me() {
         />
       </View>
 
-      <View style={{ marginTop: 28 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 11 }}>
-          <Ionicons name="ellipsis-horizontal-circle-outline" size={19} color={colors.primary} />
-          <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 18 }}>More</Text>
-        </View>
-        <View style={{ gap: 8 }}>
-          <MoreRow icon="globe-outline" title="IPTV" subtitle="International channels and guide" onPress={() => router.push('/(tabs)/iptv' as any)} />
-          <MoreRow icon="planet-outline" title="Pluto TV" subtitle="Browse free live channels" onPress={() => router.push('/(tabs)/pluto' as any)} />
-          <MoreRow icon="folder-open-outline" title="My library" subtitle="Play videos stored on this device" onPress={() => router.push('/(tabs)/library' as any)} />
-          <MoreRow icon="search-outline" title="Search" subtitle="Find films, shows, and cast" onPress={() => router.push('/(tabs)/search' as any)} />
-        </View>
-      </View>
     </ScrollView>
   );
 }
