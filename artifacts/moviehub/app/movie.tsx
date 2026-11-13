@@ -60,6 +60,28 @@ function buildPlaybackSeasons(input: any[]): PlaybackSeason[] {
   });
 }
 
+type EpisodeSourceSize = { quality: string; size: string; format: string };
+async function loadEpisodeSizes(
+  movie: Movie,
+  season: number,
+  episodes: PlaybackSeason['episodes'],
+): Promise<Record<number, EpisodeSourceSize[]>> {
+  const sizes: Record<number, EpisodeSourceSize[]> = {};
+  for (let offset = 0; offset < episodes.length; offset += 4) {
+    const batch = episodes.slice(offset, offset + 4);
+    const rows = await Promise.all(batch.map(async (item) => {
+      try {
+        const streams = await getStreams(movie, season, item.number);
+        return [item.number, streams.map(({ quality, size, format }) => ({ quality, size, format }))] as [number, EpisodeSourceSize[]];
+      } catch {
+        return [item.number, []] as [number, EpisodeSourceSize[]];
+      }
+    }));
+    rows.forEach(([episodeNumber, resources]) => { sizes[episodeNumber] = resources; });
+  }
+  return sizes;
+}
+
 export default function MovieDetails() {
   const colors = useColors();
   const router = useRouter();
@@ -68,6 +90,7 @@ export default function MovieDetails() {
   const { id, detailPath: requestedDetailPath } = useLocalSearchParams<{ id?: string; detailPath?: string }>();
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
+  const [showFullSynopsis, setShowFullSynopsis] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const posterArrival = useSharedValue(0);
   const [selectedStreamId, setSelectedStreamId] = useState('');
@@ -147,6 +170,13 @@ export default function MovieDetails() {
   const activeSeason = playbackSeasons.find((item) => item.number === season);
   const streams = sourceQuery.data || [];
   const selectedStream = streams.find((stream) => stream.id === selectedStreamId) || streams[0];
+  const episodeResourcesQuery = useQuery({
+    queryKey: ['episode-source-sizes', playbackSubject?.subjectId, playbackSubject?.detailPath, sourceSeason],
+    queryFn: () => loadEpisodeSizes(playbackSubject!, sourceSeason, activeSeason?.episodes || []),
+    enabled: isSeries && !!playbackSubject?.subjectId && !!activeSeason?.episodes.length,
+    staleTime: 300_000,
+    retry: false,
+  });
   const subtitleQuery = useQuery({
     queryKey: ['movie-api-subtitles', playbackSubject?.subjectId, playbackSubject?.detailPath, sourceSeason, sourceEpisode, selectedStream?.id],
     queryFn: () => selectedStream?.subtitles.length
@@ -379,6 +409,7 @@ export default function MovieDetails() {
     router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } });
   };
 
+  const synopsis = String(subject?.description || details?.description || '').trim();
   const actors = (details?.stars || []).filter((person: any) => person.staffType === 1 && person.staffId);
   const crew = (details?.stars || []).filter((person: any) => person.staffType !== 1);
   const image = subject?.cover?.url || subject?.coverUrl || subject?.still?.url || '';
@@ -473,9 +504,6 @@ export default function MovieDetails() {
           <Text numberOfLines={2} style={{ color: colors.foreground, fontFamily: 'Outfit_800ExtraBold', fontSize: 22, lineHeight: 26 }}>
             {title}
           </Text>
-          <Text numberOfLines={2} style={{ color: 'rgba(255,255,255,.76)', fontFamily: 'Outfit_400Regular', fontSize: 11, lineHeight: 16, marginTop: 5 }}>
-            {subject.description || details.description || 'A story worth staying for.'}
-          </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 11 }}>
             <Pressable
               onPress={playSelected}
@@ -506,6 +534,31 @@ export default function MovieDetails() {
         </ScrollView>
       ) : null}
 
+      {synopsis ? (
+        <View style={{ marginHorizontal: 16, marginTop: 17, padding: 13, borderRadius: 17, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}>
+          <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 14 }}>Synopsis</Text>
+          <Text
+            numberOfLines={showFullSynopsis ? undefined : 3}
+            style={{ color: colors.mutedForeground, fontSize: 11, lineHeight: 17, marginTop: 6 }}
+          >
+            {synopsis}
+          </Text>
+          {synopsis.length > 170 ? (
+            <Pressable
+              onPress={() => setShowFullSynopsis((expanded) => !expanded)}
+              accessibilityRole="button"
+              accessibilityLabel={showFullSynopsis ? 'Show less synopsis' : 'Show more synopsis'}
+              style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, paddingTop: 7, paddingRight: 8 }}
+            >
+              <Text style={{ color: colors.primary, fontFamily: 'Outfit_700Bold', fontSize: 11 }}>
+                {showFullSynopsis ? 'Less' : 'More'}
+              </Text>
+              <Ionicons name={showFullSynopsis ? 'chevron-up' : 'chevron-down'} size={13} color={colors.primary} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
       {isSeries || subject ? (
         <PlaybackOptionsPanel
           title={title}
@@ -516,6 +569,8 @@ export default function MovieDetails() {
           onSeasonChange={changeSeason}
           onEpisodeChange={setEpisode}
           streams={streams}
+          episodeResources={episodeResourcesQuery.data}
+          episodeResourcesLoading={episodeResourcesQuery.isFetching}
           loading={sourceQuery.isFetching}
           error={sourceQuery.isError ? sourceQuery.error.message : undefined}
           onRetry={() => { setActionError(''); void sourceQuery.refetch(); }}
@@ -602,15 +657,6 @@ export default function MovieDetails() {
               </Animated.View>
             ))}
           </View>
-        </View>
-      ) : null}
-
-      {subject.description || details.description ? (
-        <View style={{ marginTop: 27, paddingHorizontal: 20 }}>
-          <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 20 }}>About this title</Text>
-          <Text style={{ color: colors.mutedForeground, lineHeight: 22, marginTop: 9 }}>
-            {subject.description || details.description}
-          </Text>
         </View>
       ) : null}
 

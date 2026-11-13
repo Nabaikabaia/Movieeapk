@@ -187,7 +187,7 @@ export default function TabLayout() {
       <Tabs.Screen name="iptv" options={{ href: null }} />
       <Tabs.Screen name="pluto" options={{ href: null }} />
       <Tabs.Screen name="library" options={{ href: null }} />
-      <Tabs.Screen name="search" options={{ href: null }} />
+      <Tabs.Screen name="search" options={{ href: '/search' }} />
     </Tabs>
   );
 }

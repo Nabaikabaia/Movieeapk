@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   PanResponder,
   Pressable,
-  Platform,
   RefreshControl,
   ScrollView,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
@@ -14,11 +14,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueries } from '@tanstack/react-query';
 import Animated, {
+  Easing,
+  Extrapolation,
   FadeInDown,
+  interpolate,
   runOnJS,
+  SharedValue,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,27 +31,139 @@ import { findMovies, getMovies, Movie } from '@/lib/providers';
 import { useUserPreferences } from '@/lib/UserPreferences';
 import { Problem, Rail, RailSkeleton } from '@/lib/ui';
 
+type OrbitCardProps = {
+  movie: Movie;
+  offset: number;
+  progress: SharedValue<number>;
+  screenWidth: number;
+  colors: ReturnType<typeof useColors>;
+  isActive: boolean;
+  onPress: () => void;
+  onExplore: () => void;
+};
+
+function FeaturedOrbitCard({
+  movie,
+  offset,
+  progress,
+  screenWidth,
+  colors,
+  isActive,
+  onPress,
+  onExplore,
+}: OrbitCardProps) {
+  const orbitStyle = useAnimatedStyle(() => {
+    const orbitPosition = offset - progress.value;
+    const angle = orbitPosition * 38;
+    const radians = (angle * Math.PI) / 180;
+    const distance = Math.abs(orbitPosition);
+    return {
+      opacity: interpolate(distance, [0, 1, 1.45, 2], [1, 0.76, 0.22, 0], Extrapolation.CLAMP),
+      zIndex: Math.round(12 - distance * 4),
+      transform: [
+        { perspective: 1000 },
+        { translateX: Math.sin(radians) * screenWidth * 0.58 },
+        { translateY: (1 - Math.cos(radians)) * 54 },
+        { rotateY: `${-angle * 0.72}deg` },
+        { rotate: `${angle * 0.075}deg` },
+        { scale: interpolate(distance, [0, 1, 2], [1, 0.84, 0.62], Extrapolation.CLAMP) },
+      ],
+    };
+  }, [offset, screenWidth]);
+
+  return (
+    <Animated.View
+      pointerEvents={Math.abs(offset) > 1 ? 'none' : 'auto'}
+      style={[{
+        position: 'absolute',
+        left: '16%',
+        top: 0,
+        width: '68%',
+        height: 378,
+        borderRadius: 25,
+        overflow: 'hidden',
+        backgroundColor: colors.card,
+        borderWidth: 1,
+        borderColor: isActive ? 'rgba(255,255,255,.32)' : colors.border,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 15 },
+        shadowOpacity: isActive ? 0.42 : 0.18,
+        shadowRadius: 20,
+        elevation: isActive ? 12 : 4,
+      }, orbitStyle]}
+    >
+      <Image
+        source={{ uri: movie.cover?.url || movie.coverUrl || movie.poster || '' }}
+        contentFit="cover"
+        cachePolicy="disk"
+        transition={320}
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+      />
+      <LinearGradient
+        colors={isActive
+          ? ['rgba(8,9,11,.06)', 'rgba(8,9,11,.08)', 'rgba(8,9,11,.96)']
+          : ['rgba(8,9,11,.04)', 'rgba(8,9,11,.9)']}
+        locations={isActive ? [0, 0.38, 1] : undefined}
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+      />
+      {isActive ? (
+        <>
+          <View style={{ position: 'absolute', top: 16, left: 15, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+            <View style={{ backgroundColor: colors.primary, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 5 }}>
+              <Text style={{ color: '#fff', fontSize: 9, fontFamily: 'Outfit_700Bold', letterSpacing: 1.2 }}>FEATURED</Text>
+            </View>
+            <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 11 }}>
+              {movie.imdbRatingValue || movie.rating || 'NEW'}
+            </Text>
+          </View>
+          <View style={{ position: 'absolute', left: 16, right: 15, bottom: 17 }}>
+            <Text numberOfLines={2} style={{ fontFamily: 'Outfit_800ExtraBold', fontSize: 27, lineHeight: 31, color: '#fff' }}>
+              {movie.title}
+            </Text>
+            <Text numberOfLines={2} style={{ fontSize: 11, lineHeight: 16, color: 'rgba(255,255,255,.76)', marginTop: 6 }}>
+              {movie.description || movie.releaseDate?.slice(0, 4) || 'A story worth staying in for.'}
+            </Text>
+            <Pressable
+              onPress={onExplore}
+              testID="hero-play"
+              accessibilityRole="button"
+              accessibilityLabel={`Explore ${movie.title}`}
+              style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 7, backgroundColor: '#fff', borderRadius: 22, paddingVertical: 10, paddingHorizontal: 15, marginTop: 12 }}
+            >
+              <Ionicons name="play" size={15} color="#101114" />
+              <Text style={{ color: '#101114', fontFamily: 'Outfit_700Bold', fontSize: 12 }}>Explore title</Text>
+            </Pressable>
+          </View>
+        </>
+      ) : (
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={`Show ${movie.title}`}
+          style={{ flex: 1, justifyContent: 'flex-end', padding: 12 }}
+        >
+          <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,.72)', fontSize: 9, letterSpacing: 1.7, fontFamily: 'Outfit_700Bold', marginBottom: 5 }}>
+            {offset < 0 ? 'PREVIOUS' : 'UP NEXT'}
+          </Text>
+          <Text numberOfLines={2} style={{ color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 14, lineHeight: 17 }}>
+            {movie.title}
+          </Text>
+        </Pressable>
+      )}
+    </Animated.View>
+  );
+}
+
 export default function Home() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { preferences } = useUserPreferences();
+  const { width: screenWidth } = useWindowDimensions();
   const [activeCategoryCount, setActiveCategoryCount] = useState(3);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const carouselTransitioning = useRef(false);
-  const cardRotationY = useSharedValue(0);
-  const cardTranslateX = useSharedValue(0);
-  const cardScale = useSharedValue(1);
-  const cardOpacity = useSharedValue(1);
-  const featuredCardMotion = useAnimatedStyle(() => ({
-    opacity: cardOpacity.value,
-    transform: [
-      { perspective: 1100 },
-      { translateX: cardTranslateX.value },
-      { rotateY: `${cardRotationY.value}deg` },
-      { scale: cardScale.value },
-    ],
-  }));
+  const carouselProgress = useSharedValue(0);
   const categoryOffsets = useRef<Record<number, number>>({});
   const categoryQueries = useQueries({
     queries: MOVIE_CATEGORIES.map((category, index) => ({
@@ -93,36 +208,25 @@ export default function Home() {
     });
   }, [preferredGenreQueries]);
 
-  const unlockCarousel = useCallback(() => {
-    carouselTransitioning.current = false;
-  }, []);
-  const settleCarouselCard = useCallback((nextIndex: number, direction: number) => {
+  const unlockCarousel = useCallback(() => { carouselTransitioning.current = false; }, []);
+  const settleCarouselCard = useCallback((nextIndex: number) => {
     setCarouselIndex(nextIndex);
-    cardRotationY.value = direction > 0 ? 76 : -76;
-    cardTranslateX.value = direction > 0 ? 92 : -92;
-    cardScale.value = 0.86;
-    cardOpacity.value = 0;
-    cardRotationY.value = withSpring(0, { damping: 18, stiffness: 120, mass: 0.9 });
-    cardTranslateX.value = withSpring(0, { damping: 18, stiffness: 120, mass: 0.9 });
-    cardScale.value = withSpring(1, { damping: 18, stiffness: 120, mass: 0.9 });
-    cardOpacity.value = withTiming(1, { duration: 250 }, (finished) => {
-      if (finished) runOnJS(unlockCarousel)();
-    });
-  }, [cardOpacity, cardRotationY, cardScale, cardTranslateX, unlockCarousel]);
-  const navigateCarousel = useCallback((direction: number, requestedIndex?: number) => {
+    carouselProgress.value = 0;
+    carouselTransitioning.current = false;
+  }, [carouselProgress]);
+  const navigateCarousel = useCallback((direction: number) => {
     const length = heroSlides.length;
     if (length < 2 || carouselTransitioning.current) return;
     const step = direction >= 0 ? 1 : -1;
-    const nextIndex = requestedIndex ?? (carouselIndex + step + length) % length;
+    const nextIndex = (carouselIndex + step + length) % length;
     if (nextIndex === carouselIndex) return;
     carouselTransitioning.current = true;
-    cardRotationY.value = withTiming(step > 0 ? -74 : 74, { duration: 330 });
-    cardTranslateX.value = withTiming(step > 0 ? -108 : 108, { duration: 330 });
-    cardScale.value = withTiming(0.84, { duration: 330 });
-    cardOpacity.value = withTiming(0, { duration: 330 }, (finished) => {
-      if (finished) runOnJS(settleCarouselCard)(nextIndex, step);
+    carouselProgress.value = 0;
+    carouselProgress.value = withTiming(step, { duration: 760, easing: Easing.inOut(Easing.cubic) }, (finished) => {
+      if (finished) runOnJS(settleCarouselCard)(nextIndex);
+      else runOnJS(unlockCarousel)();
     });
-  }, [cardOpacity, cardRotationY, cardScale, cardTranslateX, carouselIndex, heroSlides.length, settleCarouselCard]);
+  }, [carouselIndex, carouselProgress, heroSlides.length, settleCarouselCard, unlockCarousel]);
   const carouselPanResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_event, gesture) => (
@@ -206,7 +310,7 @@ export default function Home() {
         </View>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           {[
-            { icon: 'search-outline', label: 'Search', path: '/(tabs)/search' },
+            { icon: 'search-outline', label: 'Search', path: '/search' },
             { icon: 'bookmark-outline', label: 'Library', path: '/(tabs)/library' },
           ].map((item) => (
             <Pressable
@@ -253,152 +357,29 @@ export default function Home() {
             accessibilityLabel="Featured titles. Swipe left or right to rotate."
             style={{ height: 390, marginHorizontal: 14, overflow: 'hidden', position: 'relative' }}
           >
-            {heroSlides.length > 1 && [1, -1].map((offset) => {
+            {heroSlides.length > 1 && [-2, -1, 0, 1, 2].map((offset) => {
               const index = (carouselIndex + offset + heroSlides.length) % heroSlides.length;
               const movie = heroSlides[index];
-              const isLeft = offset === -1;
               return (
-                <Animated.View
-                  key={`${isLeft ? 'left' : 'right'}-${movie.subjectId}`}
-                  entering={FadeInDown.duration(420)}
-                  style={{
-                    position: 'absolute',
-                    left: isLeft ? '-38%' : '79%',
-                    top: 12,
-                    width: '59%',
-                    height: 352,
-                    zIndex: 1,
-                  }}
-                >
-                  <Animated.View
-                    style={{
-                      flex: 1,
-                    borderRadius: 23,
-                    overflow: 'hidden',
-                    backgroundColor: colors.card,
-                    borderWidth: 1,
-                    borderColor: colors.border,
-                    opacity: 0.74,
-                    transform: Platform.OS === 'web'
-                      ? [{ rotate: isLeft ? '-7deg' : '7deg' }, { scale: 0.86 }]
-                      : [{ perspective: 900 }, { rotateY: isLeft ? '17deg' : '-17deg' }, { rotate: isLeft ? '-5deg' : '5deg' }, { scale: 0.86 }],
-                  }}
-                  >
-                  <Pressable
-                    onPress={() => {
-                      const forwardDistance = (index - carouselIndex + heroSlides.length) % heroSlides.length;
-                      navigateCarousel(forwardDistance <= heroSlides.length / 2 ? 1 : -1, index);
-                    }}
-                    accessibilityLabel={`Show ${movie.title}`}
-                    style={{ flex: 1 }}
-                  >
-                    <Image
-                      source={{ uri: movie.cover?.url || movie.coverUrl || movie.poster || '' }}
-                      contentFit="cover"
-                      cachePolicy="disk"
-                      transition={300}
-                      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-                    />
-                    <LinearGradient
-                      colors={['rgba(8,9,11,.04)', 'rgba(8,9,11,.9)']}
-                      style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-                    />
-                    <View style={{ position: 'absolute', left: 12, right: 12, bottom: 17 }}>
-                      <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,.72)', fontSize: 9, letterSpacing: 1.7, fontFamily: 'Outfit_700Bold', marginBottom: 5 }}>
-                        {isLeft ? 'PREVIOUS' : 'UP NEXT'}
-                      </Text>
-                      <Text numberOfLines={2} style={{ color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 14, lineHeight: 17 }}>
-                        {movie.title}
-                      </Text>
-                    </View>
-                  </Pressable>
-                  </Animated.View>
-                </Animated.View>
+                <FeaturedOrbitCard
+                  key={`${movie.subjectId}-${offset}`}
+                  movie={movie}
+                  offset={offset}
+                  progress={carouselProgress}
+                  screenWidth={screenWidth}
+                  colors={colors}
+                  isActive={offset === 0}
+                  onPress={() => navigateCarousel(offset < 0 ? -1 : 1)}
+                  onExplore={() => openMovie(movie)}
+                />
               );
             })}
-
-            <Animated.View
-              key={String(hero.subjectId)}
-              style={[{
-                position: 'absolute',
-                left: '16%',
-                top: 0,
-                width: '68%',
-                height: 378,
-                zIndex: 2,
-                borderRadius: 25,
-                overflow: 'hidden',
-                backgroundColor: colors.card,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,.32)',
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 15 },
-                shadowOpacity: 0.42,
-                shadowRadius: 20,
-                elevation: 12,
-              }, featuredCardMotion]}
-            >
-              <Image
-                source={{ uri: hero.cover?.url || hero.coverUrl || hero.poster || '' }}
-                contentFit="cover"
-                cachePolicy="disk"
-                transition={360}
-                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-              />
-              <LinearGradient
-                colors={['rgba(8,9,11,.06)', 'rgba(8,9,11,.08)', 'rgba(8,9,11,.96)']}
-                locations={[0, 0.38, 1]}
-                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-              />
-              <View style={{ position: 'absolute', top: 16, left: 15, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-                <View style={{ backgroundColor: colors.primary, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 5 }}>
-                  <Text style={{ color: '#fff', fontSize: 9, fontFamily: 'Outfit_700Bold', letterSpacing: 1.2 }}>FEATURED</Text>
-                </View>
-                <Text style={{ color: '#fff', fontFamily: 'Outfit_600SemiBold', fontSize: 11 }}>
-                  {hero.imdbRatingValue || hero.rating || 'NEW'}
-                </Text>
-              </View>
-
-              <View style={{ position: 'absolute', left: 16, right: 15, bottom: 17 }}>
-                <Text numberOfLines={2} style={{ fontFamily: 'Outfit_800ExtraBold', fontSize: 27, lineHeight: 31, color: '#fff' }}>
-                  {hero.title}
-                </Text>
-                <Text numberOfLines={2} style={{ fontSize: 11, lineHeight: 16, color: 'rgba(255,255,255,.76)', marginTop: 6 }}>
-                  {hero.description || hero.releaseDate?.slice(0, 4) || 'A story worth staying in for.'}
-                </Text>
-                <Pressable
-                  onPress={() => openMovie(hero)}
-                  testID="hero-play"
-                  accessibilityLabel={`Explore ${hero.title}`}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    alignSelf: 'flex-start',
-                    gap: 7,
-                    backgroundColor: '#fff',
-                    borderRadius: 22,
-                    paddingVertical: 10,
-                    paddingHorizontal: 15,
-                    marginTop: 12,
-                  }}
-                >
-                  <Ionicons name="play" size={15} color="#101114" />
-                  <Text style={{ color: '#101114', fontFamily: 'Outfit_700Bold', fontSize: 12 }}>Explore title</Text>
-                </Pressable>
-              </View>
-            </Animated.View>
-
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 3 }}>
+          <View accessibilityRole="progressbar" accessibilityValue={{ now: (carouselIndex % heroSlides.length) + 1, min: 1, max: heroSlides.length }} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 3 }}>
             {heroSlides.slice(0, 6).map((slide, index) => (
-              <Pressable
+              <View
                 key={String(slide.subjectId)}
-                onPress={() => {
-                  const forwardDistance = (index - carouselIndex + heroSlides.length) % heroSlides.length;
-                  navigateCarousel(forwardDistance <= heroSlides.length / 2 ? 1 : -1, index);
-                }}
-                accessibilityLabel={`Show featured title ${index + 1}`}
                 style={{
                   width: index === carouselIndex % heroSlides.length ? 22 : 5,
                   height: 5,

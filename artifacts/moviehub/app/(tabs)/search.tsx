@@ -1,21 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import {
   Keyboard,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
-import { findMovies, getMovies, getSuggestions, Movie } from '@/lib/providers';
+import { findMovies, getMovies, Movie } from '@/lib/providers';
 import { Empty, Poster, Problem } from '@/lib/ui';
 
 const TRENDING_SEARCHES = ['Action', 'K-Drama', 'Anime', 'Nollywood', 'Romance', 'Sci-Fi', 'Thriller', 'Comedy'];
@@ -28,7 +27,7 @@ export default function Search() {
   const [term, setTerm] = useState('');
 
   useEffect(() => {
-    const timeout = setTimeout(() => setTerm(text.trim()), 300);
+    const timeout = setTimeout(() => setTerm(text.trim()), 220);
     return () => clearTimeout(timeout);
   }, [text]);
 
@@ -36,12 +35,6 @@ export default function Search() {
     queryKey: ['search-results', term],
     queryFn: () => findMovies(term),
     enabled: term.length > 1,
-  });
-  const suggestions = useQuery({
-    queryKey: ['search-suggestions', term],
-    queryFn: () => getSuggestions(term),
-    enabled: term.length > 1,
-    staleTime: 90_000,
   });
   const popular = useQuery({
     queryKey: ['search-popular'],
@@ -58,14 +51,24 @@ export default function Search() {
     router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } });
   };
 
-  const showResults = term.length > 1;
-  const suggestionItems = (suggestions.data || []).slice(0, 5);
-  const resultItems = results.data || [];
+  const typedText = text.trim();
+  const showSearchSuggestions = typedText.length > 0;
+  const showResults = typedText.length > 1;
+  const suggestionsAreCurrent = term === typedText;
+  const matchingTrending = showSearchSuggestions
+    ? TRENDING_SEARCHES.filter((query) => query.toLowerCase().includes(typedText.toLowerCase())).slice(0, 4)
+    : [];
+  const remoteSuggestions = suggestionsAreCurrent ? (results.data || []).slice(0, 5) : [];
+  const suggestionItems = remoteSuggestions.length
+    ? remoteSuggestions
+    : matchingTrending.map((title) => ({ title, subjectId: '' } as Movie));
+  const resultItems = suggestionsAreCurrent ? results.data || [] : [];
+  const waitingForCurrentTerm = showResults && !suggestionsAreCurrent;
 
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
     >
       <View style={{ paddingTop: insets.top + 12, paddingBottom: 12 }}>
         <View style={{ paddingHorizontal: 20, marginBottom: 17 }}>
@@ -102,10 +105,11 @@ export default function Search() {
 
       <ScrollView
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 125 }}
       >
-        {!showResults ? (
+        {!showSearchSuggestions ? (
           <>
             <View style={{ paddingHorizontal: 20, marginTop: 9 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 13 }}>
@@ -159,72 +163,83 @@ export default function Search() {
               ) : null}
             </View>
 
-            <View style={{ marginHorizontal: 20, marginTop: 25, padding: 15, borderRadius: 18, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <View style={{ width: 38, height: 38, borderRadius: 14, backgroundColor: 'rgba(228,17,17,.14)', alignItems: 'center', justifyContent: 'center' }}>
-                <Ionicons name="sparkles-outline" size={18} color={colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>Search the whole catalogue</Text>
-                <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 3 }}>Get suggestions as you type.</Text>
-              </View>
-              <Ionicons name="arrow-forward" size={17} color={colors.mutedForeground} />
-            </View>
           </>
         ) : (
           <View style={{ paddingHorizontal: 20, paddingTop: 4 }}>
-            {suggestionItems.length ? (
-              <View style={{ marginBottom: 19 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 9 }}>
-                  <Ionicons name="flash-outline" size={15} color={colors.primary} />
-                  <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 14 }}>Suggestions</Text>
+            <View style={{ marginBottom: 15 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Ionicons name="flash-outline" size={14} color={colors.primary} />
+                  <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 13 }}>Suggestions</Text>
                 </View>
-                <View style={{ borderRadius: 18, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>
+                {results.isFetching || waitingForCurrentTerm ? (
+                  <Text style={{ color: colors.primary, fontFamily: 'Outfit_600SemiBold', fontSize: 9 }}>UPDATING</Text>
+                ) : null}
+              </View>
+              {suggestionItems.length ? (
+                <View style={{ borderRadius: 14, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}>
                   {suggestionItems.map((movie, index) => (
                     <Pressable
                       key={movie.subjectId || `${movie.title}-${index}`}
                       onPress={() => movie.subjectId ? openMovie(movie) : searchFor(movie.title)}
                       testID={`search-suggestion-${index}`}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: index < suggestionItems.length - 1 ? 1 : 0, borderBottomColor: colors.border }}
+                      style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 10, paddingVertical: 7, borderBottomWidth: index < suggestionItems.length - 1 ? 1 : 0, borderBottomColor: colors.border }}
                     >
                       {movie.coverUrl || movie.cover?.url ? (
-                        <Image source={{ uri: movie.coverUrl || movie.cover?.url }} contentFit="cover" cachePolicy="disk" transition={180} style={{ width: 38, height: 50, borderRadius: 8, backgroundColor: colors.secondary }} />
+                        <Image source={{ uri: movie.coverUrl || movie.cover?.url }} contentFit="cover" cachePolicy="disk" transition={160} style={{ width: 30, height: 38, borderRadius: 7, backgroundColor: colors.secondary }} />
                       ) : (
-                        <View style={{ width: 38, height: 50, borderRadius: 8, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}>
-                          <Ionicons name="film-outline" size={17} color={colors.mutedForeground} />
+                        <View style={{ width: 30, height: 38, borderRadius: 7, backgroundColor: colors.secondary, alignItems: 'center', justifyContent: 'center' }}>
+                          <Ionicons name="search" size={14} color={colors.mutedForeground} />
                         </View>
                       )}
                       <View style={{ flex: 1 }}>
-                        <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>{movie.title}</Text>
-                        <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 4 }}>{movie.releaseDate?.slice(0, 4) || 'Movie'}{movie.subjectType === 2 ? ' · Series' : ''}</Text>
+                        <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 11 }}>{movie.title}</Text>
+                        {movie.subjectId ? (
+                          <Text style={{ color: colors.mutedForeground, fontSize: 9, marginTop: 2 }}>
+                            {movie.releaseDate?.slice(0, 4) || 'Movie'}{movie.subjectType === 2 ? ' · Series' : ''}
+                          </Text>
+                        ) : null}
                       </View>
-                      <Ionicons name="arrow-up-outline" size={16} color={colors.mutedForeground} />
+                      <Ionicons name="arrow-up-outline" size={14} color={colors.mutedForeground} />
                     </Pressable>
                   ))}
                 </View>
-              </View>
-            ) : null}
-
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 15 }}>Results</Text>
-              {results.isFetching || suggestions.isFetching ? <Text style={{ color: colors.primary, fontFamily: 'Outfit_600SemiBold', fontSize: 10 }}>SEARCHING</Text> : null}
-              {!results.isFetching && resultItems.length ? <Text style={{ color: colors.mutedForeground, fontSize: 10 }}>{resultItems.length} found</Text> : null}
+              ) : (
+                <View style={{ minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 11, borderRadius: 13, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }}>
+                  <Ionicons name="search-outline" size={14} color={colors.mutedForeground} />
+                  <Text style={{ color: colors.mutedForeground, fontSize: 10 }}>
+                    {typedText.length < 2 ? 'Type one more character for live matches.' : results.isFetching || waitingForCurrentTerm ? 'Finding matches as you type…' : 'No title suggestions yet.'}
+                  </Text>
+                </View>
+              )}
             </View>
 
-            {results.isError ? (
-              <Problem message={results.error.message} retry={() => void results.refetch()} />
-            ) : resultItems.length ? (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 15 }}>
-                {resultItems.map((movie) => <Poster key={movie.subjectId} movie={movie} width={145} onPress={() => openMovie(movie)} />)}
-              </View>
-            ) : results.isFetching || suggestions.isFetching ? (
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14 }}>
-                {[0, 1, 2, 3].map((index) => (
-                  <View key={index} style={{ width: '47%', height: 190, borderRadius: 16, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }} />
-                ))}
-              </View>
-            ) : !results.isFetching && !suggestions.isFetching && !suggestionItems.length ? (
-              <Empty icon="search-outline" title="No matches found" subtitle="Try another title, actor, or one of the trending searches." />
-            ) : null}
+            {showResults ? (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                  <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 14 }}>Results</Text>
+                  {results.isFetching || waitingForCurrentTerm ? <Text style={{ color: colors.primary, fontFamily: 'Outfit_600SemiBold', fontSize: 9 }}>SEARCHING</Text> : null}
+                  {!results.isFetching && resultItems.length ? <Text style={{ color: colors.mutedForeground, fontSize: 9 }}>{resultItems.length} found</Text> : null}
+                </View>
+                {suggestionsAreCurrent && results.isError ? (
+                  <Problem message={results.error.message} retry={() => void results.refetch()} />
+                ) : resultItems.length ? (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 14 }}>
+                    {resultItems.map((movie) => <Poster key={movie.subjectId} movie={movie} width={145} onPress={() => openMovie(movie)} />)}
+                  </View>
+                ) : waitingForCurrentTerm || results.isFetching ? (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 12 }}>
+                    {[0, 1, 2, 3].map((index) => (
+                      <View key={index} style={{ width: '47%', height: 180, borderRadius: 15, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }} />
+                    ))}
+                  </View>
+                ) : (
+                  <Empty icon="search-outline" title="No matches found" subtitle="Try another title, actor, or one of the trending searches." />
+                )}
+              </>
+            ) : (
+              <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 2 }}>Keep typing to search the catalogue.</Text>
+            )}
           </View>
         )}
       </ScrollView>
