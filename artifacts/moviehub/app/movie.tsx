@@ -484,6 +484,7 @@ export default function MovieDetails() {
             player={trailerPlayer}
             style={StyleSheet.absoluteFill}
             contentFit="cover"
+            surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
             nativeControls={false}
           />
         ) : null}

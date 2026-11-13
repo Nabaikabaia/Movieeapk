@@ -405,6 +405,7 @@ export default function Player() {
           player={player}
           style={StyleSheet.absoluteFill}
           contentFit="contain"
+          surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
           nativeControls={false}
           fullscreenOptions={{ enable: true }}
           allowsPictureInPicture
