@@ -17,13 +17,23 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 
-type Destination = 'downloads' | 'search' | 'iptv' | 'pluto' | 'library';
+type Destination = 'downloads' | 'search' | 'iptv' | 'pluto' | 'library' | 'discover';
 
 type MoreQuickPanelProps = {
   visible: boolean;
   onClose: () => void;
   onNavigate: (destination: Destination) => void;
 };
+
+const FEATURED_LINKS: Array<{
+  destination: Destination;
+  label: string;
+  detail: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}> = [
+  { destination: 'library', label: 'My library', detail: 'Videos on this device', icon: 'folder-open-outline' },
+  { destination: 'iptv', label: 'IPTV', detail: 'Live channels', icon: 'globe-outline' },
+];
 
 const QUICK_LINKS: Array<{
   destination: Destination;
@@ -33,9 +43,8 @@ const QUICK_LINKS: Array<{
 }> = [
   { destination: 'downloads', label: 'Downloads', detail: 'Take it offline', icon: 'download-outline' },
   { destination: 'search', label: 'Search', detail: 'Find your next watch', icon: 'search-outline' },
-  { destination: 'iptv', label: 'IPTV', detail: 'Channels from everywhere', icon: 'globe-outline' },
   { destination: 'pluto', label: 'Pluto TV', detail: 'Free live TV', icon: 'planet-outline' },
-  { destination: 'library', label: 'My library', detail: 'Videos on this device', icon: 'folder-open-outline' },
+  { destination: 'discover', label: 'Genres', detail: 'Browse by genre', icon: 'list-outline' },
 ];
 
 export default function MoreQuickPanel({ visible, onClose, onNavigate }: MoreQuickPanelProps) {
@@ -109,8 +118,8 @@ export default function MoreQuickPanel({ visible, onClose, onNavigate }: MoreQui
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,.19)', position: 'absolute', top: 0, left: 24, right: 24 }} />
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 13 }}>
             <View>
-              <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 19 }}>Go somewhere</Text>
-              <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_400Regular', fontSize: 11, marginTop: 2 }}>Your Moviehub, at a glance.</Text>
+              <Text style={{ color: colors.foreground, fontFamily: 'Outfit_700Bold', fontSize: 19 }}>More to explore</Text>
+              <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_400Regular', fontSize: 11, marginTop: 2 }}>Saved videos, live channels and shortcuts.</Text>
             </View>
             <Pressable
               onPress={onClose}
@@ -124,7 +133,40 @@ export default function MoreQuickPanel({ visible, onClose, onNavigate }: MoreQui
             </Pressable>
           </View>
 
-          <View style={{ gap: 7 }}>
+          <View style={{ flexDirection: 'row', gap: 9, marginBottom: 15 }}>
+            {FEATURED_LINKS.map((item, index) => (
+              <Pressable
+                key={item.destination}
+                onPress={() => navigateTo(item.destination)}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.label}. ${item.detail}`}
+                testID={`more-quick-${item.destination}`}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  minHeight: 88,
+                  justifyContent: 'space-between',
+                  padding: 12,
+                  borderRadius: 19,
+                  borderWidth: 1,
+                  borderColor: pressed ? 'rgba(255,255,255,.2)' : 'rgba(255,255,255,.09)',
+                  backgroundColor: pressed ? 'rgba(255,255,255,.1)' : 'rgba(255,255,255,.045)',
+                  opacity: pressed ? 0.86 : 1,
+                  transform: [{ scale: pressed ? 0.985 : 1 }],
+                })}
+              >
+                <View style={{ width: 35, height: 35, borderRadius: 12, backgroundColor: index === 0 ? 'rgba(255,255,255,.09)' : `${colors.primary}25`, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name={item.icon} size={17} color={index === 0 ? colors.foreground : colors.primary} />
+                </View>
+                <View>
+                  <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>{item.label}</Text>
+                  <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontFamily: 'Outfit_400Regular', fontSize: 9, marginTop: 2 }}>{item.detail}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_700Bold', fontSize: 9, letterSpacing: 1.1, marginBottom: 7 }}>SHORTCUTS</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
             {QUICK_LINKS.map((item, index) => (
               <Pressable
                 key={item.destination}
@@ -133,27 +175,28 @@ export default function MoreQuickPanel({ visible, onClose, onNavigate }: MoreQui
                 accessibilityLabel={`${item.label}. ${item.detail}`}
                 testID={`more-quick-${item.destination}`}
                 style={({ pressed }) => ({
-                  minHeight: 57,
+                  width: '48%',
+                  minHeight: 52,
                   flexDirection: 'row',
                   alignItems: 'center',
-                  gap: 12,
-                  paddingHorizontal: 10,
-                  borderRadius: 17,
-                  backgroundColor: pressed ? 'rgba(255,255,255,.1)' : index === 0 ? 'rgba(255,255,255,.045)' : 'transparent',
+                  gap: 9,
+                  paddingHorizontal: 9,
+                  borderRadius: 15,
+                  backgroundColor: pressed ? 'rgba(255,255,255,.1)' : 'rgba(255,255,255,.035)',
                   borderWidth: 1,
-                  borderColor: pressed ? 'rgba(255,255,255,.13)' : 'transparent',
+                  borderColor: pressed ? 'rgba(255,255,255,.13)' : 'rgba(255,255,255,.045)',
                   opacity: pressed ? 0.82 : 1,
                   transform: [{ scale: pressed ? 0.985 : 1 }],
                 })}
               >
-                <View style={{ width: 38, height: 38, borderRadius: 13, backgroundColor: index === 0 ? `${colors.primary}29` : 'rgba(255,255,255,.075)', alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name={item.icon} size={18} color={index === 0 ? colors.primary : 'rgba(255,255,255,.86)'} />
+                <View style={{ width: 31, height: 31, borderRadius: 11, backgroundColor: index === 0 ? `${colors.primary}29` : 'rgba(255,255,255,.075)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name={item.icon} size={15} color={index === 0 ? colors.primary : 'rgba(255,255,255,.86)'} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 13 }}>{item.label}</Text>
-                  <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_400Regular', fontSize: 10, marginTop: 2 }}>{item.detail}</Text>
+                  <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 11 }}>{item.label}</Text>
+                  <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontFamily: 'Outfit_400Regular', fontSize: 8, marginTop: 2 }}>{item.detail}</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,.42)" />
+                <Ionicons name="chevron-forward" size={13} color="rgba(255,255,255,.42)" />
               </Pressable>
             ))}
           </View>

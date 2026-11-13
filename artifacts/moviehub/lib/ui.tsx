@@ -31,20 +31,19 @@ export function Rail({title,items,onMovie,action}:{title:string;items:Movie[];on
 
 export function Loading({label='Connecting to your movie providers…'}:{label?:string}){
   const c=useColors();
+  const travel=useSharedValue(0);
+  React.useEffect(()=>{travel.value=withRepeat(withTiming(1,{duration:1250}),-1,false);},[travel]);
+  const travelStyle=useAnimatedStyle(()=>({transform:[{translateX:travel.value*158-60}]}));
   return <View style={{flex:1,justifyContent:'center',paddingHorizontal:25,paddingTop:30,paddingBottom:38}}>
-    <View style={{flexDirection:'row',alignItems:'center',gap:12,marginBottom:18}}>
-      <View style={{width:42,height:42,borderRadius:15,backgroundColor:'rgba(228,17,17,.14)',alignItems:'center',justifyContent:'center'}}>
-        <Ionicons name="play" color={c.primary} size={19}/>
-      </View>
-      <View style={{flex:1}}>
-        <Text style={{color:c.foreground,fontFamily:'Outfit_700Bold',fontSize:16}}>Setting the scene</Text>
-        <Text style={{color:c.mutedForeground,fontSize:12,marginTop:3}}>{label}</Text>
+    <View style={{alignItems:'center',marginBottom:28}}>
+      <NabeesOrbitMark size={82}/>
+      <Text style={{color:c.foreground,fontFamily:'Outfit_700Bold',fontSize:18,marginTop:18}}>Setting the scene</Text>
+      <Text numberOfLines={2} style={{color:c.mutedForeground,fontSize:11,marginTop:5,textAlign:'center',lineHeight:16}}>{label}</Text>
+      <View style={{width:158,height:3,backgroundColor:c.secondary,borderRadius:3,overflow:'hidden',marginTop:19}}>
+        <Animated.View style={[travelStyle,{height:3,width:52,backgroundColor:c.primary,borderRadius:3}]}/>
       </View>
     </View>
-    <View style={{height:3,backgroundColor:c.secondary,borderRadius:3,overflow:'hidden'}}>
-      <Animated.View entering={FadeInDown.duration(420)} style={{height:3,width:'42%',backgroundColor:c.primary,borderRadius:3}}/>
-    </View>
-    <View style={{flexDirection:'row',gap:10,marginTop:20}}>
+    <View style={{flexDirection:'row',gap:10,marginTop:3}}>
       {[0,1,2].map((item)=><SkeletonPoster key={item}/>)}
     </View>
   </View>;
@@ -52,14 +51,30 @@ export function Loading({label='Connecting to your movie providers…'}:{label?:
 
 export function InlineLoader({label}:{label:string}){
   const c=useColors();
-  const opacity=useSharedValue(.4);
-  React.useEffect(()=>{opacity.value=withRepeat(withTiming(1,{duration:760}),-1,true);},[opacity]);
-  const motion=useAnimatedStyle(()=>({opacity:opacity.value,transform:[{scale:.9+opacity.value*.1}]}));
-  return <View style={{flexDirection:'row',alignItems:'center',gap:9,paddingVertical:13}}>
-    <Animated.View style={[motion,{width:19,height:19,borderRadius:10,backgroundColor:'rgba(228,17,17,.15)',alignItems:'center',justifyContent:'center'}]}>
-      <Ionicons name="play" size={9} color={c.primary}/>
-    </Animated.View>
+  return <View style={{flexDirection:'row',alignItems:'center',gap:9,paddingVertical:10}}>
+    <NabeesOrbitMark size={25}/>
     <Text style={{color:c.mutedForeground,fontSize:12,fontFamily:'Outfit_500Medium'}}>{label}</Text>
+  </View>;
+}
+
+export function NabeesOrbitMark({size=68}:{size?:number}){
+  const c=useColors();
+  const rotation=useSharedValue(0);
+  React.useEffect(()=>{rotation.value=withRepeat(withTiming(360,{duration:2600}),-1,false);},[rotation]);
+  const orbit=useAnimatedStyle(()=>({transform:[{rotate:`${rotation.value}deg`}]}));
+  const reverseOrbit=useAnimatedStyle(()=>({transform:[{rotate:`${-rotation.value*0.72}deg`}]}));
+  const center=Math.max(20,Math.round(size*0.63));
+  const ringInset=Math.round(size*0.1);
+  return <View style={{width:size,height:size,alignItems:'center',justifyContent:'center'}}>
+    <Animated.View style={[orbit,{position:'absolute',top:1,left:1,right:1,bottom:1,borderRadius:size/2,borderWidth:1,borderStyle:'dashed',borderColor:`${c.primary}70`}]}>
+      <View style={{position:'absolute',top:-3,left:'50%',marginLeft:-3,width:6,height:6,borderRadius:3,backgroundColor:c.primary,shadowColor:c.primary,shadowOpacity:.85,shadowRadius:6,elevation:4}}/>
+    </Animated.View>
+    <Animated.View style={[reverseOrbit,{position:'absolute',top:ringInset,left:ringInset,right:ringInset,bottom:ringInset,borderRadius:size/2,borderWidth:1,borderColor:`${c.primary}48`}]}/>
+    <View style={{width:center,height:center,borderRadius:center/2,alignItems:'center',justifyContent:'center',backgroundColor:c.card,borderWidth:1,borderColor:'rgba(255,255,255,.2)',shadowColor:c.primary,shadowOpacity:.28,shadowRadius:13,elevation:6}}>
+      <View style={{width:center-10,height:center-10,borderRadius:(center-10)/2,alignItems:'center',justifyContent:'center',backgroundColor:c.primary}}>
+        <Text style={{color:c.primaryForeground,fontFamily:'Outfit_800ExtraBold',fontSize:Math.max(12,size*.28),lineHeight:Math.max(14,size*.3)}}>N</Text>
+      </View>
+    </View>
   </View>;
 }
 

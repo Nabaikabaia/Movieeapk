@@ -127,7 +127,7 @@ function FloatingGlassBar({ state, navigation }: any) {
     ? currentRoute
     : 'more';
 
-  const openDestination = (destination: 'downloads' | 'search' | 'iptv' | 'pluto' | 'library') => {
+  const openDestination = (destination: 'downloads' | 'search' | 'iptv' | 'pluto' | 'library' | 'discover') => {
     setMoreOpen(false);
     router.push(`/(tabs)/${destination}` as any);
   };

@@ -13,14 +13,16 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useKeepAwake } from 'expo-keep-awake';
-import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useColors } from '@/hooks/useColors';
 import { getStreams, Movie, verifyPluto } from '@/lib/providers';
 import { useDownloads } from '@/lib/Downloads';
 import { useQuery } from '@tanstack/react-query';
 import { parseCaptions, CaptionCue } from '@/lib/subtitles';
+import { NabeesOrbitMark } from '@/lib/ui';
 
 const speedSteps = [1, 1.25, 1.5, 1.75, 2];
 
@@ -61,19 +63,7 @@ function formatBytes(bytes: number) {
 }
 
 function BufferMark() {
-  const pulse = useSharedValue(0.35);
-  useEffect(() => {
-    pulse.value = withRepeat(withTiming(1, { duration: 780 }), -1, true);
-  }, [pulse]);
-  const motion = useAnimatedStyle(() => ({ opacity: 0.3 + pulse.value * 0.55, transform: [{ scale: 0.86 + pulse.value * 0.2 }] }));
-  return (
-    <View style={{ width: 70, height: 70, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View style={[motion, { position: 'absolute', width: 66, height: 66, borderRadius: 35, borderWidth: 1, borderColor: 'rgba(228,17,17,.72)', backgroundColor: 'rgba(228,17,17,.08)' }]} />
-      <View style={{ width: 49, height: 49, borderRadius: 26, backgroundColor: 'rgba(18,19,22,.94)', borderWidth: 1, borderColor: 'rgba(255,255,255,.2)', alignItems: 'center', justifyContent: 'center' }}>
-        <Ionicons name="film-outline" color="#fff" size={21} />
-      </View>
-    </View>
-  );
+  return <NabeesOrbitMark size={70} />;
 }
 
 export default function Player() {
@@ -84,6 +74,9 @@ export default function Player() {
   const isLandscape = viewportWidth > viewportHeight;
   const params = useLocalSearchParams<{
     title?: string;
+    episodeTitle?: string;
+    episodeNumbers?: string;
+    posterUrl?: string;
     url?: string;
     id?: string;
     detailPath?: string;
@@ -106,8 +99,21 @@ export default function Player() {
   const mediaKind = String(params.kind || '').toLowerCase();
   const isLive = params.live === '1' || !!params.channelId || ['live', 'sports', 'iptv', 'globetv', 'pluto'].includes(mediaKind);
   const routeSources = parsePlayerSources(params.sources);
+  const title = String(params.title || 'Now playing');
+  const { items: downloadItems, start, updatePlaybackProgress } = useDownloads();
+  const isLocal = params.local === '1';
+  const isPartialDownload = params.partial === '1';
+  const activeDownload = downloadItems.find((item) => item.id === String(params.downloadId || ''));
+  const episodeNumbers = String(params.episodeNumbers || '')
+    .split(',')
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const activeEpisodeIndex = episodeNumbers.indexOf(Number(params.episode || 0));
+  const previousEpisode = activeEpisodeIndex > 0 ? episodeNumbers[activeEpisodeIndex - 1] : undefined;
+  const nextEpisode = activeEpisodeIndex >= 0 && activeEpisodeIndex < episodeNumbers.length - 1
+    ? episodeNumbers[activeEpisodeIndex + 1]
+    : undefined;
   const [url, setUrl] = useState(initialUrl);
-  const [title] = useState(String(params.title || 'Now playing'));
   const [failure, setFailure] = useState('');
   const [playing, setPlaying] = useState(false);
   const [playerStatus, setPlayerStatus] = useState<'idle' | 'loading' | 'readyToPlay' | 'error'>('idle');
@@ -118,6 +124,7 @@ export default function Player() {
   const [volume, setVolume] = useState(1);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [controlsLocked, setControlsLocked] = useState(false);
   const [selectedQuality, setSelectedQuality] = useState(String(params.quality || ''));
   const [subtitleUrl, setSubtitleUrl] = useState(String(params.subtitleUrl || ''));
   const [subtitleLanguage, setSubtitleLanguage] = useState(String(params.subtitleLanguage || ''));
@@ -131,6 +138,8 @@ export default function Player() {
   const activeUrlRef = useRef(url);
   const routeSourcesRef = useRef(routeSources);
   const triedSourcesRef = useRef(new Set<string>());
+  const lastProgressSavedRef = useRef(0);
+  const resumedDownloadRef = useRef('');
   activeUrlRef.current = url;
   routeSourcesRef.current = routeSources;
 
@@ -184,10 +193,15 @@ export default function Player() {
   });
 
   useEffect(() => {
+    const downloadId = String(params.downloadId || '');
     const timeSub = player.addListener('timeUpdate', (event) => {
       setCurrentTime(event.currentTime);
       setBufferedTime(event.bufferedPosition);
       setDuration(player.duration);
+      if (downloadId && event.currentTime - lastProgressSavedRef.current >= 5) {
+        lastProgressSavedRef.current = event.currentTime;
+        updatePlaybackProgress(downloadId, event.currentTime, player.duration);
+      }
     });
     const statusSub = player.addListener('statusChange', (event) => {
       setPlayerStatus(event.status);
@@ -220,7 +234,7 @@ export default function Player() {
       playSub.remove();
       audioSub.remove();
     };
-  }, [player]);
+  }, [player, params.downloadId, updatePlaybackProgress]);
 
   useEffect(() => {
     player.volume = volume;
@@ -272,10 +286,6 @@ export default function Player() {
     return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
   }, [controlsVisible, playing, settingsOpen]);
 
-  const { items: downloadItems, start } = useDownloads();
-  const isLocal = params.local === '1';
-  const isPartialDownload = params.partial === '1';
-  const activeDownload = downloadItems.find((item) => item.id === String(params.downloadId || ''));
   const subtitleOptions = [...new Map(
     (sourceQuery.data || []).flatMap((stream) => stream.subtitles || []).map((subtitle) => [subtitle.url, subtitle]),
   ).values()];
@@ -287,12 +297,31 @@ export default function Player() {
     ? activeDownload?.state === 'complete'
       ? `OFFLINE COPY READY · ${formatBytes(activeDownload.bytes || activeDownload.total)}`
       : `${formatBytes(activeDownload?.bytes || 0)} DOWNLOADED · ${activeDownload?.state === 'paused' ? 'DOWNLOAD PAUSED' : 'MORE ARRIVING'}`
-    : isLocal ? 'PLAYING FROM THIS DEVICE' : params.kind ? `${String(params.kind).toUpperCase()} · NABEES MOVIEHUB` : 'NABEES MOVIEHUB';
+    : params.kind === 'series'
+      ? `S${String(params.season || 1).padStart(2, '0')} · E${String(params.episode || 1).padStart(2, '0')}${params.episodeTitle ? ` · ${String(params.episodeTitle)}` : ''}`
+      : isLocal ? 'PLAYING FROM THIS DEVICE' : params.kind ? `${String(params.kind).toUpperCase()} · NABEES MOVIEHUB` : 'NABEES MOVIEHUB';
   const displayedFailure = failure && isPartialDownload && activeDownload?.state !== 'complete'
     ? activeDownload?.state === 'downloading'
       ? 'This video needs a little more of the file before it can play. The download is still running.'
       : 'This downloaded portion may need more data to start. Continue the download, then retry from here.'
     : failure;
+
+  useEffect(() => {
+    lastProgressSavedRef.current = 0;
+    resumedDownloadRef.current = '';
+  }, [params.downloadId]);
+
+  useEffect(() => {
+    const downloadId = String(params.downloadId || '');
+    const savedSeconds = activeDownload?.watchedSeconds || 0;
+    if (!downloadId || !savedSeconds || resumedDownloadRef.current === downloadId) return;
+    if (playerStatus !== 'readyToPlay' || !Number.isFinite(duration) || duration <= 0) return;
+    resumedDownloadRef.current = downloadId;
+    if (savedSeconds < duration - 8) {
+      player.currentTime = savedSeconds;
+      setCurrentTime(savedSeconds);
+    }
+  }, [activeDownload?.watchedSeconds, duration, params.downloadId, player, playerStatus]);
 
   const chooseAudio = (track?: any) => {
     if (!track) {
@@ -354,6 +383,18 @@ export default function Player() {
     }
   };
   const statusText = displayedFailure || sourceQuery.error?.message || (sourceQuery.isFetching ? 'Finding the best stream…' : 'This video is unavailable.');
+  const navigateEpisode = (target?: number) => {
+    if (!target) return;
+    triedSourcesRef.current.clear();
+    setUrl('');
+    setSelectedQuality('');
+    setCurrentTime(0);
+    setFailure('');
+    router.setParams({
+      episode: String(target),
+      episodeTitle: `Episode ${String(target).padStart(2, '0')}`,
+    });
+  };
 
   return (
     <View style={styles.root}>
@@ -374,6 +415,7 @@ export default function Player() {
         <Pressable
           accessibilityLabel={controlsVisible ? 'Hide player controls' : 'Show player controls'}
           onPress={() => {
+            if (controlsLocked) return;
             if (settingsOpen) { setSettingsOpen(false); return; }
             controlsVisible ? setControlsVisible(false) : revealControls();
           }}
@@ -398,6 +440,21 @@ export default function Player() {
         </View>
       )}
 
+      {!!url && controlsLocked ? (
+        <Pressable
+          onPress={() => { setControlsLocked(false); revealControls(); }}
+          accessibilityRole="button"
+          accessibilityLabel="Unlock player controls"
+          testID="player-unlock"
+          style={styles.lockOverlay}
+        >
+          <View style={styles.lockBadge}>
+            <Ionicons name="lock-closed" size={22} color="#fff" />
+          </View>
+          <Text style={styles.lockHint}>Tap to unlock</Text>
+        </Pressable>
+      ) : null}
+
       {!url && (
         <View style={styles.centerMessage}>
           {sourceQuery.isFetching ? (
@@ -417,7 +474,7 @@ export default function Player() {
         </View>
       )}
 
-      {url && controlsVisible && (
+      {url && controlsVisible && !controlsLocked && (
         <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(140)} pointerEvents="box-none" style={styles.chrome}>
           <LinearGradient colors={['rgba(4,5,7,.84)', 'rgba(4,5,7,.24)', 'transparent']} locations={[0, 0.72, 1]} style={styles.topFade} pointerEvents="none" />
           <LinearGradient colors={['transparent', 'rgba(4,5,7,.34)', 'rgba(4,5,7,.92)']} locations={[0, 0.2, 1]} style={styles.bottomFade} pointerEvents="none" />
@@ -553,18 +610,25 @@ export default function Player() {
             </Animated.View>
           ) : null}
 
-          <View style={styles.centerControls}>
+          <View style={[styles.centerDock, isLandscape && styles.centerDockLandscape]}>
+            <BlurView intensity={32} tint="dark" style={StyleSheet.absoluteFill} />
+            <View style={styles.centerControls}>
+            {previousEpisode ? (
+              <Pressable onPress={() => navigateEpisode(previousEpisode)} accessibilityLabel="Previous episode" testID="player-previous-episode" style={({ pressed }) => [styles.episodeSkipButton, pressed && styles.pressed]}>
+                <Ionicons name="play-skip-back" color="#fff" size={20} />
+              </Pressable>
+            ) : null}
             {!displayedFailure ? (
               <>
                 <Pressable onPress={() => { player.seekBy(-10); revealControls(); }} accessibilityLabel="Back ten seconds" style={({ pressed }) => [styles.skipButton, pressed && styles.pressed]}>
-                  <Ionicons name="play-back" color="#fff" size={23} />
+                  <Ionicons name="play-back" color="#fff" size={22} />
                   <Text style={styles.skipText}>10</Text>
                 </Pressable>
-                <Pressable onPress={togglePlayback} accessibilityLabel={playing ? 'Pause video' : 'Play video'} testID="player-play-pause" style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}>
-                  <Ionicons name={playing ? 'pause' : 'play'} color="#171719" size={28} />
+                <Pressable onPress={togglePlayback} accessibilityLabel={playing ? 'Pause video' : 'Play video'} testID="player-play-pause" style={({ pressed }) => [styles.playButton, { backgroundColor: colors.primary, borderColor: 'rgba(255,255,255,.32)' }, pressed && styles.pressed]}>
+                  <Ionicons name={playing ? 'pause' : 'play'} color="#fff" size={26} />
                 </Pressable>
                 <Pressable onPress={() => { player.seekBy(10); revealControls(); }} accessibilityLabel="Forward ten seconds" style={({ pressed }) => [styles.skipButton, pressed && styles.pressed]}>
-                  <Ionicons name="play-forward" color="#fff" size={23} />
+                  <Ionicons name="play-forward" color="#fff" size={22} />
                   <Text style={styles.skipText}>10</Text>
                 </Pressable>
               </>
@@ -577,9 +641,16 @@ export default function Player() {
                 </Pressable>
               </View>
             )}
+            {nextEpisode ? (
+              <Pressable onPress={() => navigateEpisode(nextEpisode)} accessibilityLabel="Next episode" testID="player-next-episode" style={({ pressed }) => [styles.episodeSkipButton, pressed && styles.pressed]}>
+                <Ionicons name="play-skip-forward" color="#fff" size={20} />
+              </Pressable>
+            ) : null}
+            </View>
           </View>
 
-          <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) + 10 }]}>
+          <View style={[styles.bottomBar, styles.bottomDock, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+            <BlurView intensity={34} tint="dark" style={StyleSheet.absoluteFill} pointerEvents="none" />
             {!isLive ? (
               <>
                 <View
@@ -601,13 +672,29 @@ export default function Player() {
                   <Text style={styles.timeLabel}>{formatTime(currentTime)}</Text>
                   <View style={{ flex: 1 }} />
                   {!isLocal && !isPartialDownload && !!url && (
-                    <Pressable onPress={() => void start(title, url)} accessibilityLabel="Download this video" style={styles.downloadButton}>
+                    <Pressable
+                      onPress={() => void start(title, url, params.kind === 'series'
+                        ? {
+                            seriesKey: String(params.id || params.detailPath || title),
+                            seriesTitle: title,
+                            posterUrl: String(params.posterUrl || ''),
+                            season: Number(params.season || 1),
+                            episode: Number(params.episode || 1),
+                            episodeTitle: String(params.episodeTitle || ''),
+                          }
+                        : { posterUrl: String(params.posterUrl || '') })}
+                      accessibilityLabel="Download this video"
+                      style={styles.downloadButton}
+                    >
                       <Ionicons name="download-outline" size={19} color="#fff" />
                       <Text style={styles.downloadLabel}>Download</Text>
                     </Pressable>
                   )}
                   <Pressable onPress={() => setVolume((value) => value > 0 ? 0 : 1)} accessibilityLabel={volume > 0 ? 'Mute video' : 'Unmute video'} style={styles.actionButton}>
                     <Ionicons name={volume > 0 ? 'volume-high-outline' : 'volume-mute-outline'} size={17} color="#fff" />
+                  </Pressable>
+                  <Pressable onPress={() => { setControlsLocked(true); setControlsVisible(false); }} accessibilityLabel="Lock player controls" testID="player-lock" style={styles.actionButton}>
+                    <Ionicons name="lock-closed-outline" size={16} color="#fff" />
                   </Pressable>
                   <Pressable onPress={() => void videoViewRef.current?.enterFullscreen()} accessibilityLabel="Enter fullscreen" style={styles.actionButton}>
                     <Ionicons name="scan-outline" size={17} color="#fff" />
@@ -673,12 +760,16 @@ const styles = StyleSheet.create({
   volumeButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,.1)', borderWidth: 1, borderColor: 'rgba(255,255,255,.1)', alignItems: 'center', justifyContent: 'center' },
   volumeTrack: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,.2)', overflow: 'hidden' },
   volumeFill: { height: '100%', borderRadius: 3 },
-  centerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 30 },
-  skipButton: { width: 58, height: 58, borderRadius: 29, backgroundColor: 'rgba(29,31,35,.66)', borderWidth: 1, borderColor: 'rgba(255,255,255,.23)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: .32, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
+  centerDock: { width: '92%', maxWidth: 370, minHeight: 108, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: 30, borderWidth: 1, borderColor: 'rgba(255,255,255,.2)', backgroundColor: 'rgba(14,16,20,.5)', shadowColor: '#000', shadowOpacity: .3, shadowRadius: 24, shadowOffset: { width: 0, height: 8 }, elevation: 9 },
+  centerDockLandscape: { minHeight: 92, maxWidth: 440 },
+  centerControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 7 },
+  episodeSkipButton: { width: 42, height: 46, borderRadius: 18, backgroundColor: 'rgba(255,255,255,.09)', borderWidth: 1, borderColor: 'rgba(255,255,255,.14)', alignItems: 'center', justifyContent: 'center' },
+  skipButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,.1)', borderWidth: 1, borderColor: 'rgba(255,255,255,.2)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: .32, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
   skipText: { color: '#fff', fontSize: 9, fontFamily: 'Outfit_600SemiBold', marginTop: -3, textShadowColor: 'rgba(0,0,0,.5)', textShadowRadius: 3 },
-  playButton: { width: 76, height: 76, borderRadius: 40, backgroundColor: 'rgba(248,246,240,.96)', borderWidth: 5, borderColor: 'rgba(255,255,255,.34)', alignItems: 'center', justifyContent: 'center', paddingLeft: 2, shadowColor: '#000', shadowOpacity: .48, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 11 },
+  playButton: { width: 68, height: 68, borderRadius: 36, backgroundColor: 'rgba(228,17,17,.96)', borderWidth: 4, borderColor: 'rgba(255,255,255,.34)', alignItems: 'center', justifyContent: 'center', paddingLeft: 2, shadowColor: '#e41111', shadowOpacity: .4, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 11 },
   pressed: { transform: [{ scale: .94 }], opacity: .86 },
   bottomBar: { paddingHorizontal: 18, paddingTop: 22 },
+  bottomDock: { paddingHorizontal: 14, paddingTop: 10, marginHorizontal: 12, marginBottom: 10, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,.19)', backgroundColor: 'rgba(12,14,17,.55)' },
   progressTouchArea: { height: 30, justifyContent: 'center' },
   progressTrack: { height: 4, borderRadius: 4, backgroundColor: 'rgba(255,255,255,.3)', overflow: 'visible' },
   progressTrackPressed: { height: 6 },
@@ -694,6 +785,9 @@ const styles = StyleSheet.create({
   liveDot: { width: 7, height: 7, borderRadius: 4 },
   liveLabel: { color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 11, letterSpacing: 1 },
   centerMessage: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', padding: 26, gap: 13 },
+  lockOverlay: { ...StyleSheet.absoluteFill, zIndex: 8, alignItems: 'center', justifyContent: 'center' },
+  lockBadge: { width: 58, height: 58, borderRadius: 29, backgroundColor: 'rgba(0,0,0,.62)', borderWidth: 1, borderColor: 'rgba(255,255,255,.23)', alignItems: 'center', justifyContent: 'center' },
+  lockHint: { color: 'rgba(255,255,255,.72)', fontFamily: 'Outfit_500Medium', fontSize: 11, marginTop: 9 },
   captionWrap: { position: 'absolute', left: 22, right: 22, alignItems: 'center', zIndex: 6 },
   captionText: { overflow: 'hidden', color: '#fff', fontFamily: 'Outfit_700Bold', fontSize: 17, lineHeight: 24, textAlign: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, backgroundColor: 'rgba(0,0,0,.78)', textShadowColor: 'rgba(0,0,0,.85)', textShadowOffset: { width: 1, height: 1 }, textShadowRadius: 3 },
   bufferText: { color: 'rgba(255,255,255,.76)', fontFamily: 'Outfit_600SemiBold', fontSize: 13, textAlign: 'center' },

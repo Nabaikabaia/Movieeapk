@@ -113,6 +113,7 @@ export default function MovieDetails() {
   const title = subject?.title || 'Movie details';
   const isSeries = subject?.subjectType === 2;
   const detailPath = String(subject?.detailPath || requestedDetailPath || id || '');
+  const posterUrl = subject?.cover?.url || subject?.coverUrl || subject?.still?.url || '';
   const rawDubs = subject?.dubs?.length ? subject.dubs : details?.dubs || [];
   const audioDubs = useMemo<AudioOption[]>(() => (Array.isArray(rawDubs) ? rawDubs : [])
     .map((dub: any) => {
@@ -299,6 +300,9 @@ export default function MovieDetails() {
         pathname: '/player',
         params: {
           title,
+          episodeTitle: isSeries ? activeSeason?.episodes.find((item) => item.number === sourceEpisode)?.title || '' : '',
+          episodeNumbers: isSeries ? activeSeason?.episodes.map((item) => item.number).join(',') || '' : '',
+          posterUrl,
           id: String(playerSubject.subjectId),
           detailPath: String(playerSubject.detailPath || detailPath),
           season: String(sourceSeason),
@@ -331,7 +335,16 @@ export default function MovieDetails() {
       if (!downloadUrl) throw new Error('This source does not provide a downloadable file.');
       const suffix = isSeries ? ` S${season} E${episode}` : '';
       const languageSuffix = selectedDub ? ` · ${selectedDub.language}` : '';
-      void startDownload(`${title}${suffix}${languageSuffix} · ${stream.quality}p`, downloadUrl);
+      void startDownload(`${title}${suffix}${languageSuffix} · ${stream.quality}p`, downloadUrl, isSeries
+        ? {
+            seriesKey: String(subject.subjectId),
+            seriesTitle: title,
+            posterUrl,
+            season,
+            episode,
+            episodeTitle: activeSeason?.episodes.find((item) => item.number === episode)?.title,
+          }
+        : { posterUrl });
       setDownloadNotice(isSeries ? 'Current episode added to Downloads.' : 'Movie added to Downloads.');
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'The Movie API could not prepare this download.');
@@ -387,7 +400,14 @@ export default function MovieDetails() {
             || `Episode ${String(episodeNumber).padStart(2, '0')}`;
           const audioLabel = selectedDub ? ` · ${selectedDub.language}` : '';
           const downloadTitle = `${title} S${season} E${episodeNumber} · ${episodeTitle}${audioLabel} · ${stream.quality}p`;
-          void startDownload(downloadTitle, downloadUrl);
+          void startDownload(downloadTitle, downloadUrl, {
+            seriesKey: String(subject.subjectId),
+            seriesTitle: title,
+            posterUrl,
+            season,
+            episode: episodeNumber,
+            episodeTitle,
+          });
           queued += 1;
         }
         setDownloadProgress({ current: Math.min(offset + batch.length, episodeNumbers.length), total: episodeNumbers.length });
@@ -596,7 +616,6 @@ export default function MovieDetails() {
           downloadProgress={downloadProgress}
           downloadNotice={downloadNotice}
           actionError={actionError}
-          onPlay={playSelected}
           onDownload={() => { void downloadSelected(); }}
         />
       ) : null}

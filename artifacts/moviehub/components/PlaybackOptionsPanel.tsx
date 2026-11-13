@@ -43,10 +43,26 @@ type Props = {
   downloadProgress?: { current: number; total: number } | null;
   downloadNotice?: string;
   actionError?: string;
-  onPlay: () => void;
   onDownload: () => void;
   actionLoading?: 'play' | 'download' | null;
 };
+
+function parseSizeBytes(value?: string) {
+  if (!value) return null;
+  const match = value.trim().match(/^([\d.]+)\s*(B|KB|KIB|MB|MIB|GB|GIB|TB|TIB)?$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = (match[2] || 'B').toUpperCase();
+  const power = unit.startsWith('T') ? 4 : unit.startsWith('G') ? 3 : unit.startsWith('M') ? 2 : unit.startsWith('K') ? 1 : 0;
+  return Number.isFinite(amount) ? Math.round(amount * 1024 ** power) : null;
+}
+
+function formatSize(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
 
 function DropdownTrigger({
   label,
@@ -133,6 +149,20 @@ export function PlaybackOptionsPanel(props: Props) {
   const selectedQuality = activeStream ? `${activeStream.quality}p` : 'Choose quality';
   const allEpisodesSelected = !!selectedSeason?.episodes.length
     && selectedSeason.episodes.every((episode) => props.selectedDownloadEpisodes.includes(episode.number));
+  const selectedEpisodeSizes = props.selectedDownloadEpisodes.map((episodeNumber) => {
+    const resources = props.episodeResources?.[episodeNumber] || [];
+    const resource = resources.find((item) => item.quality.replace(/p$/i, '') === String(activeStream?.quality || '').replace(/p$/i, ''))
+      || resources[0];
+    return parseSizeBytes(resource?.size);
+  });
+  const knownEpisodeSizes = selectedEpisodeSizes.filter((size): size is number => size !== null);
+  const selectedSizeLabel = !props.selectedDownloadEpisodes.length
+    ? ''
+    : knownEpisodeSizes.length === props.selectedDownloadEpisodes.length
+      ? formatSize(knownEpisodeSizes.reduce((sum, size) => sum + size, 0))
+      : knownEpisodeSizes.length
+        ? `At least ${formatSize(knownEpisodeSizes.reduce((sum, size) => sum + size, 0))}`
+        : props.episodeResourcesLoading ? 'Calculating size…' : 'Size unavailable';
   const uniqueAudioTracks = useMemo(
     () => [...new Map(props.audioTracks.map((track) => [track.id || track.code || track.label, track])).values()],
     [props.audioTracks],
@@ -313,7 +343,7 @@ export function PlaybackOptionsPanel(props: Props) {
                           <Text numberOfLines={1} style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 10.5 }}>{episode.title}</Text>
                           <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 8.5, marginTop: 2 }}>{resourceLine}</Text>
                         </View>
-                        <Ionicons name={isPlaying ? 'play-circle' : 'play-outline'} size={17} color={isPlaying ? colors.primary : colors.mutedForeground} />
+                        {isPlaying ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} /> : null}
                       </Pressable>
                     </View>
                   );
@@ -333,34 +363,26 @@ export function PlaybackOptionsPanel(props: Props) {
                       ? `Preparing ${props.downloadProgress.current}/${props.downloadProgress.total}`
                       : `Download ${props.selectedDownloadEpisodes.length} selected`}
                   </Text>
-                  {props.selectedDownloadEpisodes.length ? <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_500Medium', fontSize: 9 }}>{selectedQuality}</Text> : null}
+                  {props.selectedDownloadEpisodes.length ? <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_500Medium', fontSize: 9 }}>{selectedQuality} · {selectedSizeLabel}</Text> : null}
                 </Pressable>
               </View>
             ) : null}
           </View>
 
-          <View style={{ flexDirection: 'row', gap: 7, marginTop: 12 }}>
-            <Pressable
-              onPress={props.onPlay}
-              disabled={!activeStream || !!props.actionLoading}
-              testID="play-selected-stream"
-              style={{ flex: 1, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 13, backgroundColor: activeStream ? colors.primary : colors.secondary, opacity: activeStream ? 1 : 0.6 }}
-            >
-              <Ionicons name={props.actionLoading === 'play' ? 'refresh' : 'play'} size={15} color={colors.primaryForeground} />
-              <Text style={{ color: colors.primaryForeground, fontFamily: 'Outfit_700Bold', fontSize: 11 }}>
-                {props.actionLoading === 'play' ? 'Refreshing link…' : `Play ${selectedQuality}`}
-              </Text>
-            </Pressable>
+          {!props.isSeries ? (
             <Pressable
               onPress={props.onDownload}
               disabled={!activeStream || !!props.actionLoading}
               accessibilityLabel="Download selected resolution"
               testID="download-selected-stream"
-              style={{ width: 43, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: colors.secondary, borderWidth: 1, borderColor: colors.border, opacity: activeStream ? 1 : 0.5 }}
+              style={{ minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 12, borderRadius: 13, backgroundColor: activeStream ? colors.primary : colors.secondary, borderWidth: 1, borderColor: colors.border, opacity: activeStream ? 1 : 0.5 }}
             >
-              <Ionicons name={props.actionLoading === 'download' ? 'refresh' : 'download-outline'} size={16} color={colors.foreground} />
+              <Ionicons name={props.actionLoading === 'download' ? 'refresh' : 'download-outline'} size={16} color={colors.primaryForeground} />
+              <Text style={{ color: colors.primaryForeground, fontFamily: 'Outfit_700Bold', fontSize: 11 }}>
+                {props.actionLoading === 'download' ? 'Preparing download…' : `Download ${selectedQuality}`}
+              </Text>
             </Pressable>
-          </View>
+          ) : null}
           {props.actionError ? <Text accessibilityRole="alert" style={{ color: colors.primary, fontSize: 11, lineHeight: 16, marginTop: 10 }}>{props.actionError}</Text> : null}
           {props.downloadNotice ? <Text style={{ color: colors.mutedForeground, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{props.downloadNotice}</Text> : null}
         </View>
