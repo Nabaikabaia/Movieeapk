@@ -34,6 +34,7 @@ import { Problem, Rail, RailSkeleton } from '@/lib/ui';
 type OrbitCardProps = {
   movie: Movie;
   offset: number;
+  virtualPosition: number;
   progress: SharedValue<number>;
   screenWidth: number;
   colors: ReturnType<typeof useColors>;
@@ -45,6 +46,7 @@ type OrbitCardProps = {
 function FeaturedOrbitCard({
   movie,
   offset,
+  virtualPosition,
   progress,
   screenWidth,
   colors,
@@ -53,7 +55,7 @@ function FeaturedOrbitCard({
   onExplore,
 }: OrbitCardProps) {
   const orbitStyle = useAnimatedStyle(() => {
-    const orbitPosition = offset - progress.value;
+    const orbitPosition = virtualPosition - progress.value;
     const angle = orbitPosition * 38;
     const radians = (angle * Math.PI) / 180;
     const distance = Math.abs(orbitPosition);
@@ -69,7 +71,7 @@ function FeaturedOrbitCard({
         { scale: interpolate(distance, [0, 1, 2], [1, 0.84, 0.62], Extrapolation.CLAMP) },
       ],
     };
-  }, [offset, screenWidth]);
+  }, [virtualPosition, screenWidth]);
 
   return (
     <Animated.View
@@ -125,13 +127,13 @@ function FeaturedOrbitCard({
             </Text>
             <Pressable
               onPress={onExplore}
-              testID="hero-play"
+              testID="hero-details"
               accessibilityRole="button"
-              accessibilityLabel={`Explore ${movie.title}`}
+              accessibilityLabel={`Open details for ${movie.title}`}
               style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 7, backgroundColor: '#fff', borderRadius: 22, paddingVertical: 10, paddingHorizontal: 15, marginTop: 12 }}
             >
-              <Ionicons name="play" size={15} color="#101114" />
-              <Text style={{ color: '#101114', fontFamily: 'Outfit_700Bold', fontSize: 12 }}>Explore title</Text>
+              <Ionicons name="chevron-forward" size={15} color="#101114" />
+              <Text style={{ color: '#101114', fontFamily: 'Outfit_700Bold', fontSize: 12 }}>Details</Text>
             </Pressable>
           </View>
         </>
@@ -161,7 +163,7 @@ export default function Home() {
   const { preferences } = useUserPreferences();
   const { width: screenWidth } = useWindowDimensions();
   const [activeCategoryCount, setActiveCategoryCount] = useState(3);
-  const [carouselIndex, setCarouselIndex] = useState(0);
+  const [carouselPosition, setCarouselPosition] = useState(0);
   const carouselTransitioning = useRef(false);
   const carouselProgress = useSharedValue(0);
   const categoryOffsets = useRef<Record<number, number>>({});
@@ -197,7 +199,10 @@ export default function Home() {
       })
       .slice(0, 8);
   }, [categoryQueries]);
-  const hero = heroSlides.length ? heroSlides[carouselIndex % heroSlides.length] : undefined;
+  const carouselIndex = heroSlides.length
+    ? ((carouselPosition % heroSlides.length) + heroSlides.length) % heroSlides.length
+    : 0;
+  const hero = heroSlides.length ? heroSlides[carouselIndex] : undefined;
   const preferredMovies = useMemo(() => {
     const seen = new Set<string>();
     return preferredGenreQueries.flatMap((query) => query.data || []).filter((movie) => {
@@ -210,23 +215,20 @@ export default function Home() {
 
   const unlockCarousel = useCallback(() => { carouselTransitioning.current = false; }, []);
   const settleCarouselCard = useCallback((nextIndex: number) => {
-    setCarouselIndex(nextIndex);
-    carouselProgress.value = 0;
+    setCarouselPosition(nextIndex);
     carouselTransitioning.current = false;
-  }, [carouselProgress]);
+  }, []);
   const navigateCarousel = useCallback((direction: number) => {
     const length = heroSlides.length;
     if (length < 2 || carouselTransitioning.current) return;
     const step = direction >= 0 ? 1 : -1;
-    const nextIndex = (carouselIndex + step + length) % length;
-    if (nextIndex === carouselIndex) return;
+    const nextPosition = carouselPosition + step;
     carouselTransitioning.current = true;
-    carouselProgress.value = 0;
-    carouselProgress.value = withTiming(step, { duration: 760, easing: Easing.inOut(Easing.cubic) }, (finished) => {
-      if (finished) runOnJS(settleCarouselCard)(nextIndex);
+    carouselProgress.value = withTiming(nextPosition, { duration: 760, easing: Easing.inOut(Easing.cubic) }, (finished) => {
+      if (finished) runOnJS(settleCarouselCard)(nextPosition);
       else runOnJS(unlockCarousel)();
     });
-  }, [carouselIndex, carouselProgress, heroSlides.length, settleCarouselCard, unlockCarousel]);
+  }, [carouselPosition, carouselProgress, heroSlides.length, settleCarouselCard, unlockCarousel]);
   const carouselPanResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_event, gesture) => (
@@ -358,13 +360,15 @@ export default function Home() {
             style={{ height: 390, marginHorizontal: 14, overflow: 'hidden', position: 'relative' }}
           >
             {heroSlides.length > 1 && [-2, -1, 0, 1, 2].map((offset) => {
-              const index = (carouselIndex + offset + heroSlides.length) % heroSlides.length;
+              const virtualPosition = carouselPosition + offset;
+              const index = ((virtualPosition % heroSlides.length) + heroSlides.length) % heroSlides.length;
               const movie = heroSlides[index];
               return (
                 <FeaturedOrbitCard
-                  key={`${movie.subjectId}-${offset}`}
+                  key={virtualPosition}
                   movie={movie}
                   offset={offset}
+                  virtualPosition={virtualPosition}
                   progress={carouselProgress}
                   screenWidth={screenWidth}
                   colors={colors}
