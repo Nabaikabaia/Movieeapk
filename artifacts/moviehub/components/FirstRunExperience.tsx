@@ -7,11 +7,29 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 import { GENRES } from '@/lib/catalog';
 import { useColors } from '@/hooks/useColors';
+import { findMovies, isAdultContent, type Movie } from '@/lib/providers';
+
+const FAMILY_SCENE = require('../assets/images/family-cinema.jpg');
+const SPORTS_SCENE = require('../assets/images/sports-legends.jpg');
+const NEWS_SCENE = require('../assets/images/live-news.jpg');
+const NATURE_SCENE = require('../assets/images/nature-documentary.jpg');
+
+async function loadSpotlightPosters(): Promise<Movie[]> {
+  const titles = ['Avengers', 'Spider-Man', 'Black Panther'];
+  const results = await Promise.all(titles.map((term) => findMovies(term, 1, 12)));
+  return results.map((movies, index) => {
+    const term = titles[index].toLowerCase();
+    const suitable = movies.filter((movie) => !isAdultContent(movie) && !!movie.cover?.url);
+    return suitable.find((movie) => movie.title.toLowerCase().includes(term)) ?? suitable[0];
+  }).filter((movie): movie is Movie => !!movie);
+}
 
 type FirstRunExperienceProps = {
   selectedGenres: string[];
@@ -61,6 +79,12 @@ export default function FirstRunExperience({
   const [step, setStep] = useState(0);
   const [alertMessage, setAlertMessage] = useState('');
   const accentColor = step === 1 ? colors.accent : colors.primary;
+  const { data: spotlightPosters = [] } = useQuery({
+    queryKey: ['moviehub', 'first-run-spotlight-posters'],
+    queryFn: loadSpotlightPosters,
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: 1,
+  });
 
   const isGenreStep = step === INTRO_SCREENS.length;
   const isPermissionStep = step === FLOW_LENGTH - 1;
@@ -114,29 +138,72 @@ export default function FirstRunExperience({
 
         {intro ? (
           <Animated.View key={step} entering={FadeInDown.duration(340)} style={{ flex: 1, justifyContent: 'center', paddingBottom: 14 }}>
-            <View style={{ height: 246, borderRadius: 30, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,.12)', marginBottom: 29 }}>
+            <View style={{ height: 246, borderRadius: 30, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,.18)', marginBottom: 25, backgroundColor: colors.card }}>
+              <Image
+                source={step === 0 ? FAMILY_SCENE : step === 1 ? SPORTS_SCENE : NEWS_SCENE}
+                contentFit="cover"
+                transition={260}
+                style={{ position: 'absolute', width: '100%', height: '100%' }}
+              />
+              {step === 2 ? (
+                <View style={{ position: 'absolute', right: 13, bottom: 49, width: 94, height: 76, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,.76)', transform: [{ rotate: '3deg' }] }}>
+                  <Image source={NATURE_SCENE} contentFit="cover" style={{ width: '100%', height: '100%' }} />
+                  <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 7, paddingVertical: 4, backgroundColor: 'rgba(10,12,16,.68)' }}>
+                    <Text style={{ color: 'white', fontFamily: 'Outfit_600SemiBold', fontSize: 8, letterSpacing: 1 }}>DOCUMENTARIES</Text>
+                  </View>
+                </View>
+              ) : null}
+              {step === 0 && spotlightPosters.length > 0 ? (
+                <View style={{ position: 'absolute', right: 19, bottom: 43, width: 167, height: 135, alignItems: 'center', justifyContent: 'center' }}>
+                  {spotlightPosters.slice(0, 3).map((movie, index) => {
+                    const rotations = ['-12deg', '0deg', '12deg'];
+                    const offsets = [-36, 0, 36];
+                    return (
+                      <View
+                        key={`${movie.subjectId}-${index}`}
+                        style={{
+                          position: 'absolute',
+                          width: 78,
+                          height: 118,
+                          left: 44 + offsets[index],
+                          borderRadius: 10,
+                          overflow: 'hidden',
+                          borderWidth: 1,
+                          borderColor: 'rgba(255,255,255,.76)',
+                          transform: [{ rotate: rotations[index] }, { translateY: index === 1 ? -5 : 4 }],
+                          shadowColor: '#000',
+                          shadowOpacity: 0.35,
+                          shadowRadius: 8,
+                          elevation: 6,
+                        }}
+                      >
+                        <Image
+                          source={{ uri: movie.cover?.url }}
+                          contentFit="cover"
+                          cachePolicy="disk"
+                          transition={180}
+                          style={{ width: '100%', height: '100%' }}
+                        />
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
               <LinearGradient
-                colors={['rgba(52,24,26,.96)', 'rgba(22,20,23,.97)', 'rgba(14,15,17,.98)']}
+                colors={['rgba(8,10,14,.28)', 'rgba(8,10,14,.12)', 'rgba(8,10,14,.78)']}
                 start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
+                end={{ x: 0.22, y: 1 }}
                 style={{ flex: 1, padding: 22, justifyContent: 'space-between' }}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ color: 'rgba(255,255,255,.68)', fontFamily: 'Outfit_600SemiBold', fontSize: 10, letterSpacing: 2 }}>{intro.eyebrow}</Text>
-                  <View style={{ width: 38, height: 38, borderRadius: 14, backgroundColor: 'rgba(255,255,255,.08)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: 'white', fontFamily: 'Outfit_600SemiBold', fontSize: 10, letterSpacing: 2, textShadowColor: 'rgba(0,0,0,.6)', textShadowRadius: 7 }}>{intro.eyebrow}</Text>
+                  <View style={{ width: 38, height: 38, borderRadius: 14, backgroundColor: 'rgba(12,14,18,.53)', borderWidth: 1, borderColor: 'rgba(255,255,255,.18)', alignItems: 'center', justifyContent: 'center' }}>
                     <Ionicons name={intro.icon} size={19} color={accentColor} />
                   </View>
                 </View>
 
-                <View style={{ position: 'absolute', right: -12, bottom: 15, width: 168, height: 168, borderRadius: 84, borderWidth: 1, borderColor: 'rgba(255,255,255,.08)', alignItems: 'center', justifyContent: 'center' }}>
-                  <View style={{ width: 126, height: 126, borderRadius: 63, borderWidth: 1, borderColor: 'rgba(255,255,255,.07)', alignItems: 'center', justifyContent: 'center' }}>
-                    <View style={{ width: 82, height: 82, borderRadius: 30, backgroundColor: `${accentColor}22`, alignItems: 'center', justifyContent: 'center' }}>
-                      <Ionicons name={intro.icon} size={38} color={accentColor} />
-                    </View>
-                  </View>
-                </View>
-                <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,.12)', width: '47%' }} />
-                <Text style={{ color: 'rgba(255,255,255,.62)', fontFamily: 'Outfit_600SemiBold', fontSize: 9, letterSpacing: 1.6 }}>{intro.detail}</Text>
+                <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,.4)', width: '47%' }} />
+                <Text style={{ color: 'white', fontFamily: 'Outfit_600SemiBold', fontSize: 9, letterSpacing: 1.6, textShadowColor: 'rgba(0,0,0,.8)', textShadowRadius: 6 }}>{intro.detail}</Text>
                 <BlurView intensity={16} tint="dark" style={{ position: 'absolute', bottom: 19, right: 18, width: 71, height: 48, borderRadius: 15, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderColor: 'rgba(255,255,255,.16)', borderWidth: 1 }}>
                   <Ionicons name={step === 1 ? 'play' : step === 2 ? 'radio' : 'sparkles-outline'} size={18} color={colors.foreground} />
                 </BlurView>
