@@ -129,7 +129,9 @@ function FloatingGlassBar({ state, navigation }: any) {
 
   const openDestination = (destination: 'downloads' | 'search' | 'iptv' | 'pluto' | 'library' | 'discover') => {
     setMoreOpen(false);
-    router.push(`/(tabs)/${destination}` as any);
+    const destinationExists = state.routes.some((route: any) => route.name === destination);
+    if (!destinationExists) return;
+    navigation.navigate(destination);
   };
 
   return (
@@ -208,12 +210,12 @@ export default function TabLayout() {
       <Tabs.Screen name="index" options={{ title: 'Home' }} />
       <Tabs.Screen name="discover" options={{ title: 'Explore' }} />
       <Tabs.Screen name="sports" options={{ title: 'Sports' }} />
-      <Tabs.Screen name="downloads" options={{ href: null }} />
+      <Tabs.Screen name="downloads" options={{ title: 'Downloads' }} />
       <Tabs.Screen name="me" options={{ title: 'Me' }} />
-      <Tabs.Screen name="iptv" options={{ href: null }} />
-      <Tabs.Screen name="pluto" options={{ href: null }} />
-      <Tabs.Screen name="library" options={{ href: null }} />
-      <Tabs.Screen name="search" options={{ href: null }} />
+      <Tabs.Screen name="iptv" options={{ title: 'IPTV' }} />
+      <Tabs.Screen name="pluto" options={{ title: 'Pluto TV' }} />
+      <Tabs.Screen name="library" options={{ title: 'My library' }} />
+      <Tabs.Screen name="search" options={{ title: 'Search' }} />
     </Tabs>
   );
 }
