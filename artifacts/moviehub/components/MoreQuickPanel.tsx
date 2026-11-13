@@ -9,6 +9,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
+  Extrapolation,
+  interpolate,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -50,17 +53,32 @@ const QUICK_LINKS: Array<{
 export default function MoreQuickPanel({ visible, onClose, onNavigate }: MoreQuickPanelProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const [presented, setPresented] = React.useState(visible);
   const entrance = useSharedValue(0);
+  const backdrop = useSharedValue(0);
 
   useEffect(() => {
-    entrance.value = withSpring(visible ? 1 : 0, { damping: 20, stiffness: 190, mass: 0.8 });
-  }, [entrance, visible]);
+    if (visible) {
+      setPresented(true);
+      entrance.value = withSpring(1, { damping: 21, stiffness: 205, mass: 0.76 });
+      backdrop.value = withTiming(1, { duration: 230 });
+      return;
+    }
+    if (!presented) return;
+    entrance.value = withSpring(0, { damping: 22, stiffness: 225, mass: 0.78 }, (finished) => {
+      if (finished) runOnJS(setPresented)(false);
+    });
+    backdrop.value = withTiming(0, { duration: 190 });
+  }, [backdrop, entrance, presented, visible]);
 
   const panelMotion = useAnimatedStyle(() => ({
-    opacity: entrance.value,
-    transform: [{ translateY: (1 - entrance.value) * 24 }, { scale: 0.97 + entrance.value * 0.03 }],
+    opacity: interpolate(entrance.value, [0, 0.12, 1], [0, 0.72, 1], Extrapolation.CLAMP),
+    transform: [
+      { translateY: (1 - entrance.value) * 34 },
+      { scale: 0.95 + interpolate(entrance.value, [0, 1], [0, 0.05], Extrapolation.CLAMP) },
+    ],
   }));
-  const backdropMotion = useAnimatedStyle(() => ({ opacity: withTiming(entrance.value * 0.7, { duration: 190 }) }));
+  const backdropMotion = useAnimatedStyle(() => ({ opacity: backdrop.value * 0.72 }));
 
   const navigateTo = (destination: Destination) => {
     onClose();
@@ -69,14 +87,18 @@ export default function MoreQuickPanel({ visible, onClose, onNavigate }: MoreQui
 
   return (
     <Modal
-      visible={visible}
+      visible={presented}
       transparent
       animationType="none"
       statusBarTranslucent
       onRequestClose={onClose}
       presentationStyle="overFullScreen"
     >
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+      <View
+        pointerEvents={visible ? 'auto' : 'none'}
+        accessibilityViewIsModal={visible}
+        style={{ flex: 1, justifyContent: 'flex-end' }}
+      >
         <Animated.View pointerEvents="none" style={[{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.background }, backdropMotion]} />
         <Pressable
           onPress={onClose}

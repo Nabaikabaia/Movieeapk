@@ -15,22 +15,22 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useQueries } from '@tanstack/react-query';
 import Animated, {
-  Easing,
   Extrapolation,
   FadeInDown,
+  FadeOutUp,
   interpolate,
   runOnJS,
   SharedValue,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  withSpring,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { GENRES, MOVIE_CATEGORIES } from '@/lib/catalog';
 import { findMovies, getMovies, isAdultContent, Movie } from '@/lib/providers';
 import { useUserPreferences } from '@/lib/UserPreferences';
-import { Problem, Rail, RailSkeleton } from '@/lib/ui';
+import { NabeesOrbitMark, Problem, Rail, RailSkeleton } from '@/lib/ui';
 
 type OrbitCardProps = {
   movie: Movie;
@@ -165,8 +165,11 @@ export default function Home() {
   const [tourStep, setTourStep] = useState(0);
   const { width: screenWidth } = useWindowDimensions();
   const [activeCategoryCount, setActiveCategoryCount] = useState(3);
+  const [refreshingHome, setRefreshingHome] = useState(false);
   const [carouselPosition, setCarouselPosition] = useState(0);
   const carouselTransitioning = useRef(false);
+  const carouselMotionToken = useRef(0);
+  const carouselGestureOrigin = useRef(0);
   const carouselProgress = useSharedValue(0);
   const categoryOffsets = useRef<Record<number, number>>({});
   const categoryQueries = useQueries({
@@ -216,22 +219,34 @@ export default function Home() {
     });
   }, [preferredGenreQueries, preferences.parentalControlsEnabled]);
 
-  const unlockCarousel = useCallback(() => { carouselTransitioning.current = false; }, []);
-  const settleCarouselCard = useCallback((nextIndex: number) => {
+  const unlockCarousel = useCallback((token: number) => {
+    if (carouselMotionToken.current === token) carouselTransitioning.current = false;
+  }, []);
+  const settleCarouselCard = useCallback((nextIndex: number, token: number) => {
+    if (carouselMotionToken.current !== token) return;
     setCarouselPosition(nextIndex);
     carouselTransitioning.current = false;
   }, []);
+  const swipeStride = Math.max(220, screenWidth * 0.62);
+  const animateCarouselTo = useCallback((targetPosition: number, velocity = 0) => {
+    const token = ++carouselMotionToken.current;
+    carouselTransitioning.current = true;
+    carouselProgress.value = withSpring(
+      targetPosition,
+      { damping: 16, stiffness: 118, mass: 0.68, velocity },
+      (finished) => {
+        if (finished) runOnJS(settleCarouselCard)(targetPosition, token);
+        else runOnJS(unlockCarousel)(token);
+      },
+    );
+  }, [carouselProgress, settleCarouselCard, unlockCarousel]);
   const navigateCarousel = useCallback((direction: number) => {
     const length = heroSlides.length;
     if (length < 2 || carouselTransitioning.current) return;
     const step = direction >= 0 ? 1 : -1;
     const nextPosition = carouselPosition + step;
-    carouselTransitioning.current = true;
-    carouselProgress.value = withTiming(nextPosition, { duration: 760, easing: Easing.inOut(Easing.cubic) }, (finished) => {
-      if (finished) runOnJS(settleCarouselCard)(nextPosition);
-      else runOnJS(unlockCarousel)();
-    });
-  }, [carouselPosition, carouselProgress, heroSlides.length, settleCarouselCard, unlockCarousel]);
+    animateCarouselTo(nextPosition, step * 1.8);
+  }, [animateCarouselTo, carouselPosition, heroSlides.length]);
   const carouselPanResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_event, gesture) => (
@@ -240,12 +255,32 @@ export default function Home() {
     onMoveShouldSetPanResponderCapture: (_event, gesture) => (
       Math.abs(gesture.dx) > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2
     ),
-    onPanResponderRelease: (_event, gesture) => {
-      if (gesture.dx < -42) navigateCarousel(1);
-      else if (gesture.dx > 42) navigateCarousel(-1);
+    onPanResponderGrant: () => {
+      carouselMotionToken.current += 1;
+      carouselTransitioning.current = true;
+      carouselGestureOrigin.current = carouselProgress.value;
     },
-    onPanResponderTerminationRequest: () => false,
-  }), [navigateCarousel]);
+    onPanResponderMove: (_event, gesture) => {
+      if (!carouselTransitioning.current) return;
+      carouselProgress.value = carouselGestureOrigin.current - gesture.dx / swipeStride;
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      if (!carouselTransitioning.current) return;
+      const projectedDistance = gesture.dx + gesture.vx * 180;
+      const projectedCards = -projectedDistance / swipeStride;
+      const fling = Math.abs(projectedCards) < 0.18
+        ? 0
+        : Math.max(-2, Math.min(2, projectedCards));
+      const targetPosition = Math.round(carouselGestureOrigin.current + fling);
+      const flingVelocity = -gesture.vx * 1000 / swipeStride;
+      animateCarouselTo(targetPosition, flingVelocity);
+    },
+    onPanResponderTerminate: () => {
+      if (!carouselTransitioning.current) return;
+      animateCarouselTo(Math.round(carouselGestureOrigin.current));
+    },
+    onPanResponderTerminationRequest: () => true,
+  }), [animateCarouselTo, carouselProgress, screenWidth, swipeStride]);
 
   useEffect(() => {
     if (heroSlides.length < 2) return undefined;
@@ -276,7 +311,18 @@ export default function Home() {
   const loadingCatalog = categoryQueries.slice(0, activeCategoryCount).some((query) => query.isFetching);
   const activeQueries = categoryQueries.slice(0, activeCategoryCount);
   const allCatalogRequestsFailed = activeQueries.length > 0 && activeQueries.every((query) => query.isError);
-  const refreshCatalog = () => Promise.all(categoryQueries.slice(0, activeCategoryCount).map((query) => query.refetch()));
+  const refreshCatalog = useCallback(async () => {
+    setRefreshingHome(true);
+    try {
+      const visibleQueries = [
+        ...categoryQueries.slice(0, activeCategoryCount),
+        ...preferredGenreQueries,
+      ];
+      await Promise.all(visibleQueries.map((query) => query.refetch()));
+    } finally {
+      setRefreshingHome(false);
+    }
+  }, [activeCategoryCount, categoryQueries, preferredGenreQueries]);
   const openMovie = (movie: Movie) =>
     router.push({ pathname: '/movie', params: { id: String(movie.subjectId), detailPath: String(movie.detailPath || '') } });
   const openGenre = (slug: string) =>
@@ -292,9 +338,14 @@ export default function Home() {
         style={{ flex: 1, backgroundColor: colors.background }}
         refreshControl={
           <RefreshControl
-            refreshing={categoryQueries.some((query) => query.isRefetching)}
+            refreshing={refreshingHome}
             onRefresh={() => void refreshCatalog()}
             tintColor={colors.primary}
+            title="Checking for fresh picks"
+            titleColor={colors.mutedForeground}
+            progressBackgroundColor={colors.card}
+            colors={[colors.primary, colors.foreground]}
+            progressViewOffset={insets.top + 12}
           />
         }
         contentContainerStyle={{ paddingBottom: 120 }}
@@ -345,6 +396,38 @@ export default function Home() {
           ))}
         </View>
       </View>
+
+      {refreshingHome ? (
+        <Animated.View
+          entering={FadeInDown.duration(240)}
+          exiting={FadeOutUp.duration(180)}
+          accessibilityLiveRegion="polite"
+          style={{
+            marginHorizontal: 16,
+            marginBottom: 10,
+            paddingHorizontal: 13,
+            paddingVertical: 11,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,.12)',
+            backgroundColor: 'rgba(255,255,255,.045)',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 11,
+          }}
+        >
+          <NabeesOrbitMark size={30} />
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.foreground, fontFamily: 'Outfit_600SemiBold', fontSize: 12 }}>
+              Refreshing your picks
+            </Text>
+            <Text style={{ color: colors.mutedForeground, fontFamily: 'Outfit_400Regular', fontSize: 10, marginTop: 2 }}>
+              Checking for new movies and series
+            </Text>
+          </View>
+          <Ionicons name="sparkles-outline" size={17} color={colors.primary} />
+        </Animated.View>
+      ) : null}
 
       {!hasCatalogData && loadingCatalog ? (
         <View style={{ height: 185, marginHorizontal: 14, borderRadius: 24, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, padding: 20, justifyContent: 'flex-end', overflow: 'hidden' }}>
