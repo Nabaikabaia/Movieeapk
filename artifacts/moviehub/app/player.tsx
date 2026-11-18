@@ -162,7 +162,9 @@ export default function Player() {
   const playerSource = (sourceUrl: string) => isLive
     ? { uri: sourceUrl, contentType: 'hls' as const }
     : /^https?:\/\//i.test(sourceUrl)
-      ? { uri: sourceUrl, headers: MOVIEBOX_STREAM_HEADERS }
+      ? Platform.OS === 'web'
+        ? sourceUrl
+        : { uri: sourceUrl, headers: MOVIEBOX_STREAM_HEADERS }
       : sourceUrl;
 
   useKeepAwake();
@@ -654,6 +656,7 @@ export default function Player() {
             </Animated.View>
           ) : null}
 
+          {!isBuffering ? (
           <View style={[styles.centerDock, isLandscape && styles.centerDockLandscape]}>
             <View style={styles.centerControls}>
             {previousEpisode ? (
@@ -691,6 +694,7 @@ export default function Player() {
             ) : null}
             </View>
           </View>
+          ) : null}
 
           <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
             {!isLive ? (
