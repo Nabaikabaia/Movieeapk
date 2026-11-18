@@ -1,8 +1,5 @@
 import {
-  MOVIEBOX_API_HOST,
-  MOVIEBOX_CLIENT_TOKEN,
-  MOVIEBOX_STREAM_HEADERS,
-  MOVIEBOX_WEB_ORIGIN,
+  MOVIEBOX_SOURCES_API,
   SUPABASE_PUBLISHABLE_KEY,
   SUPABASE_URL,
 } from './config';
@@ -222,86 +219,6 @@ export async function getRecommendations(id: string, detailData?: any): Promise<
     return [];
   }
 }
-const MOVIEBOX_REQUEST_HEADERS = {
-  Accept: 'application/json',
-  'User-Agent': MOVIEBOX_STREAM_HEADERS['User-Agent'],
-  Origin: MOVIEBOX_WEB_ORIGIN,
-  Referer: `${MOVIEBOX_WEB_ORIGIN}/`,
-  'x-client-info': '{"timezone":"Africa/Lagos"}',
-  'x-request-lang': 'en',
-  'save-data': 'on',
-};
-let movieboxTokenCache: { value: string; expiresAt: number } | undefined;
-
-async function getMovieboxToken(): Promise<string> {
-  if (movieboxTokenCache && movieboxTokenCache.expiresAt > Date.now()) {
-    return movieboxTokenCache.value;
-  }
-  if (!MOVIEBOX_CLIENT_TOKEN) {
-    throw new Error('MovieBox client configuration is missing.');
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const response = await fetch(`${MOVIEBOX_API_HOST}/wefeed-h5api-bff/home`, {
-      headers: { ...MOVIEBOX_REQUEST_HEADERS, 'x-client-token': MOVIEBOX_CLIENT_TOKEN },
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`MovieBox token request failed (${response.status}).`);
-    const userHeader = response.headers.get('x-user');
-    let token = '';
-    try {
-      token = String(JSON.parse(userHeader || '{}').token || '');
-    } catch {
-      token = '';
-    }
-    if (!token) throw new Error('MovieBox did not return an access token.');
-    movieboxTokenCache = { value: token, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
-    return token;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function movieboxRequest(
-  url: string,
-  token: string,
-  timeoutMs = 25_000,
-  extraHeaders: Record<string, string> = {},
-): Promise<any> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      headers: {
-        ...MOVIEBOX_REQUEST_HEADERS,
-        Authorization: `Bearer ${token}`,
-        ...(url.includes('/subject/play')
-          ? { Referer: `${MOVIEBOX_WEB_ORIGIN}/videoPlayPage/` }
-          : {}),
-        ...extraHeaders,
-      },
-      signal: controller.signal,
-    });
-    let payload: any;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new Error(`MovieBox returned an unreadable response (${response.status}).`);
-    }
-    if (!response.ok) {
-      throw new Error(payload?.message || payload?.error || `MovieBox request failed (${response.status}).`);
-    }
-    if (payload?.code !== undefined && Number(payload.code) !== 0) {
-      throw new Error(payload?.message || payload?.msg || `MovieBox returned code ${payload.code}.`);
-    }
-    return payload;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 function formatMovieboxSize(bytes: number): string {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
@@ -310,85 +227,61 @@ function formatMovieboxSize(bytes: number): string {
 }
 
 export async function getStreams(movie: Movie, season = 0, episode = 0): Promise<Stream[]> {
-  const sourceUrl = new URL('/wefeed-h5api-bff/subject/play', MOVIEBOX_WEB_ORIGIN);
-  sourceUrl.search = new URLSearchParams({
+  const params = new URLSearchParams({
     subjectId: String(movie.subjectId),
-    se: String(season),
-    ep: String(episode),
     detailPath: String(movie.detailPath || ''),
+    season: String(season),
+    episode: String(episode),
   }).toString();
-  const token = await getMovieboxToken();
-  const payload = await movieboxRequest(sourceUrl.toString(), token, 25_000, {
-    Referer: `${MOVIEBOX_WEB_ORIGIN}/videoPlayPage/${movie.detailPath || ''}`,
-  });
-  const raw = Array.isArray(payload.data?.streams) ? payload.data.streams : [];
+  const payload = await safe(`${MOVIEBOX_SOURCES_API}/sources?${params}`, undefined, 25_000);
+  const raw = Array.isArray(payload.streams) ? payload.streams : [];
   return raw.map((x: any, i: number) => {
-    const rawAudio = x.audioTracks || x.audio_tracks || x.audios || x.audio || [];
-    const rawSubtitles = x.subtitles || x.captions || [];
-    const url = String(x.url || x.playUrl || x.play_url || '');
+    const url = String(x.playUrl || x.url || x.downloadUrl || '');
     const rawSize = Number.parseInt(String(x.size_bytes ?? x.size ?? ''), 10);
     const sizeMb = Number(x.size_mb);
     const rawQuality = String(x.resolutions || x.quality || '480');
+    const rawSubtitles = Array.isArray(x.subtitles) ? x.subtitles : [];
     const quality = rawQuality.replace(/[^\d]/g, '') || rawQuality;
     return {
       id: String(x.id || `${movie.subjectId}-${season}-${episode}-stream-${i}`),
       url,
-      proxyUrl: url,
-      downloadUrl: url,
+      proxyUrl: String(x.playUrl || x.url || ''),
+      downloadUrl: String(x.downloadUrl || x.playUrl || x.url || ''),
       quality,
-      size: rawSize > 0
+      size: String(x.size || (rawSize > 0
         ? formatMovieboxSize(rawSize)
         : sizeMb > 0
           ? `${sizeMb} MB`
-          : '—',
+          : '—')),
       format: x.format || 'MP4',
-      audioTracks: (Array.isArray(rawAudio) ? rawAudio : []).map((track: any, trackIndex: number) => ({
-        id: String(track.id || track.trackId || track.code || `audio-${trackIndex}`),
-        language: String(track.language || track.lang || track.languageCode || ''),
-        code: String(track.code || track.languageCode || track.language || track.lang || ''),
-        label: String(track.label || track.name || track.title || track.language_name || track.language || `Audio ${trackIndex + 1}`),
-        kind: 'embedded' as const,
-      })),
+      audioTracks: [],
       subtitles: (Array.isArray(rawSubtitles) ? rawSubtitles : []).filter((subtitle: any) => subtitle.url || subtitle.file || subtitle.src).map((subtitle: any) => ({
         language: String(subtitle.language_name || subtitle.lanName || subtitle.language || subtitle.lan || subtitle.label || 'Subtitle'),
         code: String(subtitle.language || subtitle.lan || subtitle.code || ''),
         url: String(subtitle.url || subtitle.file || subtitle.src || ''),
       })),
-      headers: MOVIEBOX_STREAM_HEADERS,
     };
   }).filter((stream: Stream) => /^https?:\/\//i.test(stream.url));
 }
 export async function getSubtitles(movie: Movie, stream: Stream, season = 0, episode = 0): Promise<Stream['subtitles']> {
   const params = new URLSearchParams({
     format: String(stream.format || 'MP4'),
-    id: String(stream.id),
+    streamId: String(stream.id),
     subjectId: String(movie.subjectId),
     detailPath: String(movie.detailPath || ''),
+    season: String(season),
+    episode: String(episode),
   });
   try {
-    const token = await getMovieboxToken();
-    const payload = await movieboxRequest(
-      `${MOVIEBOX_API_HOST}/wefeed-h5api-bff/subject/caption?${params}`,
-      token,
-      20_000,
-    );
-    const captions = Array.isArray(payload.data?.captions) ? payload.data.captions : [];
-    return captions.flatMap((caption: any) => {
-      const rawUrl = String(caption.url || '').trim();
-      if (!rawUrl) return [];
-      try {
-        const url = new URL(rawUrl, MOVIEBOX_WEB_ORIGIN);
-        if (url.protocol !== 'https:') return [];
-        const code = String(caption.lan || caption.language || caption.code || '');
-        return [{
-          language: String(caption.lanName || caption.lan || caption.language || 'Subtitle'),
-          code,
-          url: url.toString(),
-        }];
-      } catch {
-        return [];
-      }
-    });
+    const payload = await safe(`${MOVIEBOX_SOURCES_API}/subtitles?${params}`, undefined, 20_000);
+    const captions = Array.isArray(payload.subtitles) ? payload.subtitles : [];
+    return captions
+      .filter((caption: any) => caption.url || caption.downloadUrl)
+      .map((caption: any) => ({
+        language: String(caption.language_name || caption.language || 'Subtitle'),
+        code: String(caption.language || caption.code || ''),
+        url: String(caption.url || caption.downloadUrl),
+      }));
   } catch {
     return [];
   }

@@ -301,7 +301,7 @@ export default function Player() {
     }
     let cancelled = false;
     setSubtitleLoading(true);
-    void fetch(subtitleUrl, { headers: MOVIEBOX_STREAM_HEADERS })
+    void fetch(subtitleUrl)
       .then((response) => {
         if (!response.ok) throw new Error('Subtitle download failed');
         return response.text();
