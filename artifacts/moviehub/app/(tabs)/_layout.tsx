@@ -131,7 +131,11 @@ function FloatingGlassBar({ state, navigation }: any) {
     setMoreOpen(false);
     const destinationExists = state.routes.some((route: any) => route.name === destination);
     if (!destinationExists) return;
-    navigation.navigate(destination);
+    if (typeof navigation?.navigate === 'function') {
+      navigation.navigate(destination);
+      return;
+    }
+    router.navigate(`/(tabs)/${destination}` as never);
   };
 
   return (
