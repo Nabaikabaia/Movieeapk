@@ -9,7 +9,19 @@ export const SUPABASE_PUBLISHABLE_KEY = env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 
 export const NABEES_URL = 'https://spcytnumhpqpiwfwhycx.supabase.co/functions/v1/rapid-function';
 export const SUGGEST_URL = 'https://mumubmrvkqcgzidqubcc.supabase.co/functions/v1/movies/search-suggest';
-export const SUBTITLES_URL = 'https://movieapi.freesrv.com/moviebox/subtitles';
+export const MOVIEBOX_API_HOST = 'https://h5-api.aoneroom.com';
+export const MOVIEBOX_WEB_ORIGIN = 'https://netnaija.film';
+export const MOVIEBOX_CLIENT_TOKEN = env.EXPO_PUBLIC_MOVIEBOX_CLIENT_TOKEN || '1782669587,8e1d0d7e7f49451b0d5df14699a7e317';
+export const MOVIEBOX_STREAM_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  Accept: 'video/mp4,*/*;q=0.8',
+  'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+  Origin: MOVIEBOX_WEB_ORIGIN,
+  Referer: `${MOVIEBOX_WEB_ORIGIN}/`,
+  'Sec-Fetch-Site': 'cross-site',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Dest': 'video',
+};
 export const SPORTS_API = 'https://movieapi.freesrv.com/moviebox/sports';
 export const PLUTO_API = 'https://api.nabeestech.com/pluto';
 export const GLOBETV_API = 'https://movieapi.nabees.online/globetv';

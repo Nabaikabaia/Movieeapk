@@ -23,6 +23,7 @@ import { useDownloads } from '@/lib/Downloads';
 import { useQuery } from '@tanstack/react-query';
 import { parseCaptions, CaptionCue } from '@/lib/subtitles';
 import { NabeesOrbitMark } from '@/lib/ui';
+import { MOVIEBOX_STREAM_HEADERS } from '@/lib/config';
 
 const speedSteps = [1, 1.25, 1.5, 1.75, 2];
 
@@ -145,7 +146,9 @@ export default function Player() {
 
   const playerSource = (sourceUrl: string) => isLive
     ? { uri: sourceUrl, contentType: 'hls' as const }
-    : sourceUrl;
+    : /^https?:\/\//i.test(sourceUrl)
+      ? { uri: sourceUrl, headers: MOVIEBOX_STREAM_HEADERS }
+      : sourceUrl;
 
   useKeepAwake();
 
@@ -249,7 +252,7 @@ export default function Player() {
     }
     let cancelled = false;
     setSubtitleLoading(true);
-    void fetch(subtitleUrl)
+    void fetch(subtitleUrl, { headers: MOVIEBOX_STREAM_HEADERS })
       .then((response) => {
         if (!response.ok) throw new Error('Subtitle download failed');
         return response.text();

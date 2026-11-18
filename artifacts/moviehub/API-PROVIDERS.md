@@ -7,17 +7,18 @@ content.
 | Source | App features | Notes |
 | --- | --- | --- |
 | Nabees rapid-function movie API | Home rails, all catalog categories, genre search, search suggestions, details, cast and recommendations | The title-details response supplies trailer and staff metadata when available. |
-| `movieapi.freesrv.com/moviebox/sources` | Movie and series playback and supported file downloads | This is the only movie-stream source configured in the app. Results vary by title and episode. |
+| MovieBox upstream (`h5-api.aoneroom.com`, `netnaija.film`) | Direct source lookup, movie and series playback, and supported file downloads | The app requests source and caption metadata directly and sends the upstream's required playback headers. Results vary by title and episode. |
 | `movieapi.freesrv.com/moviebox/sports` | Dedicated live, upcoming and completed sports fixtures | Match playback is shown when a playable URL is provided. |
 | Pluto TV | Dedicated Pluto live-channel list and verified playback | The channel is verified when selected; availability varies by channel and region. |
 | IPTV directory and stream proxy | IPTV channel search and playback | Uses the existing public Supabase function and header-aware stream URLs. |
 | GlobeTV | Additional international channels within the IPTV tab | Closed, adult, or unstreamable channels are excluded. |
-| Subtitle API | Captions returned with movie playback sources | Subtitle playback depends on support in the stream and Android video player. |
+| MovieBox caption endpoint | Caption lookup for supported streams | Subtitle playback depends on the caption format and Android video player. |
 | Staff filmography | Related-title metadata | Retained as an imported provider; current movie detail pages prioritize cast and recommendations. |
 
 The app does not include alternate Moviebox v1/v3 providers or a WWE section.
-Movie sources are requested from the single `movieapi.freesrv.com` endpoint; a
-successful API response may still contain no playable source for a specific title.
+Movie source and caption metadata are requested directly from the MovieBox
+upstream. A successful source response may still contain URLs that the upstream
+CDN refuses to serve to a particular network or player.
 
 ## Local files and offline playback
 

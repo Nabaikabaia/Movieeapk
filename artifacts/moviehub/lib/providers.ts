@@ -1,17 +1,24 @@
-import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from './config';
+import {
+  MOVIEBOX_API_HOST,
+  MOVIEBOX_CLIENT_TOKEN,
+  MOVIEBOX_STREAM_HEADERS,
+  MOVIEBOX_WEB_ORIGIN,
+  SUPABASE_PUBLISHABLE_KEY,
+  SUPABASE_URL,
+} from './config';
 
 export const NABEES_API = 'https://spcytnumhpqpiwfwhycx.supabase.co/functions/v1/rapid-function';
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXJhYmFzZSIsInJlZiI6Imx1ZWZjdWZmY29qeGNxZG1ybmdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYyNzQxNDEsImV4cCI6MjA4MTg1MDE0MX0.AeAsdjzttMtweZZWsYbfzm8D_5Kg5bPDveg8Qytzu5w';
 export const CONTENT_PROVIDERS = [
   { name: 'Nabees movie catalogue', host: 'rapid-function', feature: 'Discover, categories, search, details, recommendations, trailers' },
-  { name: 'Movie API', host: 'movieapi.freesrv.com', feature: 'Single movie and series source for playback and downloads' },
+  { name: 'MovieBox sources', host: 'h5-api.aoneroom.com', feature: 'Direct movie and series source and subtitle lookups' },
   { name: 'Nabees search suggestions', host: 'mumubmrvkqcgzidqubcc.supabase.co', feature: 'Search suggestions' },
   { name: 'Pluto TV', host: 'api.nabeestech.com/pluto', feature: 'Live channels and verified channel streams' },
   { name: 'IPTV directory', host: 'luefcuffcojxcqdmrngi.supabase.co', feature: 'IPTV channel search, guide metadata, stream links' },
   { name: 'GlobeTV', host: 'movieapi.nabees.online/globetv', feature: 'International channels, countries and categories' },
   { name: 'Sports', host: 'movieapi.freesrv.com/moviebox/sports', feature: 'Live, upcoming and completed matches' },
   { name: 'Staff filmography', host: 'luefcuffcojxcqdmrngi.supabase.co', feature: 'Related filmography' },
-  { name: 'Subtitles', host: 'movieapi.freesrv.com', feature: 'Subtitle lookup for supported streams' },
+  { name: 'Subtitles', host: 'h5-api.aoneroom.com', feature: 'Direct caption lookup for supported streams' },
 ] as const;
 
 export type Movie = {
@@ -81,6 +88,7 @@ export type Stream = {
   format: string;
   audioTracks: AudioOption[];
   subtitles: { language: string; code: string; url: string }[];
+  headers?: Record<string, string>;
 };
 const safe = async (url: string, init?: RequestInit, timeout = 16000) => {
   const controller = new AbortController();
@@ -214,25 +222,125 @@ export async function getRecommendations(id: string, detailData?: any): Promise<
     return [];
   }
 }
+const MOVIEBOX_REQUEST_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': MOVIEBOX_STREAM_HEADERS['User-Agent'],
+  Origin: MOVIEBOX_WEB_ORIGIN,
+  Referer: `${MOVIEBOX_WEB_ORIGIN}/`,
+  'x-client-info': '{"timezone":"Africa/Lagos"}',
+  'x-request-lang': 'en',
+  'save-data': 'on',
+};
+let movieboxTokenCache: { value: string; expiresAt: number } | undefined;
+
+async function getMovieboxToken(): Promise<string> {
+  if (movieboxTokenCache && movieboxTokenCache.expiresAt > Date.now()) {
+    return movieboxTokenCache.value;
+  }
+  if (!MOVIEBOX_CLIENT_TOKEN) {
+    throw new Error('MovieBox client configuration is missing.');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await fetch(`${MOVIEBOX_API_HOST}/wefeed-h5api-bff/home`, {
+      headers: { ...MOVIEBOX_REQUEST_HEADERS, 'x-client-token': MOVIEBOX_CLIENT_TOKEN },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`MovieBox token request failed (${response.status}).`);
+    const userHeader = response.headers.get('x-user');
+    let token = '';
+    try {
+      token = String(JSON.parse(userHeader || '{}').token || '');
+    } catch {
+      token = '';
+    }
+    if (!token) throw new Error('MovieBox did not return an access token.');
+    movieboxTokenCache = { value: token, expiresAt: Date.now() + 6 * 60 * 60 * 1000 };
+    return token;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function movieboxRequest(
+  url: string,
+  token: string,
+  timeoutMs = 25_000,
+  extraHeaders: Record<string, string> = {},
+): Promise<any> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        ...MOVIEBOX_REQUEST_HEADERS,
+        Authorization: `Bearer ${token}`,
+        ...(url.includes('/subject/play')
+          ? { Referer: `${MOVIEBOX_WEB_ORIGIN}/videoPlayPage/` }
+          : {}),
+        ...extraHeaders,
+      },
+      signal: controller.signal,
+    });
+    let payload: any;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new Error(`MovieBox returned an unreadable response (${response.status}).`);
+    }
+    if (!response.ok) {
+      throw new Error(payload?.message || payload?.error || `MovieBox request failed (${response.status}).`);
+    }
+    if (payload?.code !== undefined && Number(payload.code) !== 0) {
+      throw new Error(payload?.message || payload?.msg || `MovieBox returned code ${payload.code}.`);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function formatMovieboxSize(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 export async function getStreams(movie: Movie, season = 0, episode = 0): Promise<Stream[]> {
-  const p = new URLSearchParams({
+  const sourceUrl = new URL('/wefeed-h5api-bff/subject/play', MOVIEBOX_WEB_ORIGIN);
+  sourceUrl.search = new URLSearchParams({
     subjectId: String(movie.subjectId),
+    se: String(season),
+    ep: String(episode),
     detailPath: String(movie.detailPath || ''),
-    season: String(season),
-    episode: String(episode),
+  }).toString();
+  const token = await getMovieboxToken();
+  const payload = await movieboxRequest(sourceUrl.toString(), token, 25_000, {
+    Referer: `${MOVIEBOX_WEB_ORIGIN}/videoPlayPage/${movie.detailPath || ''}`,
   });
-  const d = await safe(`https://movieapi.freesrv.com/moviebox/sources?${p}`);
-  const raw = d.data?.streams || d.streams || [];
+  const raw = Array.isArray(payload.data?.streams) ? payload.data.streams : [];
   return raw.map((x: any, i: number) => {
-    const rawAudio = x.audioTracks || x.audio_tracks || x.audios || x.audio || d.data?.audioTracks || d.data?.audio_tracks || [];
-    const rawSubtitles = x.subtitles || x.captions || d.data?.subtitles || d.data?.captions || [];
+    const rawAudio = x.audioTracks || x.audio_tracks || x.audios || x.audio || [];
+    const rawSubtitles = x.subtitles || x.captions || [];
+    const url = String(x.url || x.playUrl || x.play_url || '');
+    const rawSize = Number.parseInt(String(x.size_bytes ?? x.size ?? ''), 10);
+    const sizeMb = Number(x.size_mb);
+    const rawQuality = String(x.resolutions || x.quality || '480');
+    const quality = rawQuality.replace(/[^\d]/g, '') || rawQuality;
     return {
-      id: String(x.id || `stream-${i}`),
-      url: x.playUrl || x.url || x.proxyUrl || x.stream_url || '',
-      proxyUrl: x.playUrl || x.proxyUrl || x.stream_url || x.url || '',
-      downloadUrl: x.downloadUrl || x.download_url || x.proxyUrl || x.url || '',
-      quality: String(x.quality || x.resolution || '480').replace(/[^\d]/g, '') || '480',
-      size: x.size || x.size_mb ? String(x.size || `${x.size_mb} MB`) : '—',
+      id: String(x.id || `${movie.subjectId}-${season}-${episode}-stream-${i}`),
+      url,
+      proxyUrl: url,
+      downloadUrl: url,
+      quality,
+      size: rawSize > 0
+        ? formatMovieboxSize(rawSize)
+        : sizeMb > 0
+          ? `${sizeMb} MB`
+          : '—',
       format: x.format || 'MP4',
       audioTracks: (Array.isArray(rawAudio) ? rawAudio : []).map((track: any, trackIndex: number) => ({
         id: String(track.id || track.trackId || track.code || `audio-${trackIndex}`),
@@ -246,39 +354,40 @@ export async function getStreams(movie: Movie, season = 0, episode = 0): Promise
         code: String(subtitle.language || subtitle.lan || subtitle.code || ''),
         url: String(subtitle.url || subtitle.file || subtitle.src || ''),
       })),
+      headers: MOVIEBOX_STREAM_HEADERS,
     };
-  }).filter((stream: Stream) => !!stream.url);
+  }).filter((stream: Stream) => /^https?:\/\//i.test(stream.url));
 }
 export async function getSubtitles(movie: Movie, stream: Stream, season = 0, episode = 0): Promise<Stream['subtitles']> {
   const params = new URLSearchParams({
-    streamId: String(stream.id),
+    format: String(stream.format || 'MP4'),
+    id: String(stream.id),
     subjectId: String(movie.subjectId),
     detailPath: String(movie.detailPath || ''),
-    format: String(stream.format || 'MP4'),
-    season: String(season),
-    episode: String(episode),
   });
   try {
-    const payload = await safe(`https://movieapi.freesrv.com/moviebox/subtitles?${params}`, undefined, 8_000);
-    const candidates = [
-      payload.data?.subtitles, payload.subtitles,
-      payload.data?.tracks, payload.tracks,
-      payload.data?.captions, payload.captions,
-      payload.data?.items, payload.items, payload.data,
-    ];
-    const tracks = candidates.find(Array.isArray) || [];
-    return tracks.flatMap((track: any) => {
-      const languageValue = track.language;
-      const code = String(
-        track.languageCode || track.lan || track.lang || track.code || track.srclang ||
-        (typeof languageValue === 'string' ? languageValue : languageValue?.code) || '',
-      );
-      const language = String(
-        track.languageName || track.lanName || track.language_name || track.name || track.label ||
-        (typeof languageValue === 'string' ? languageValue : languageValue?.name) || code || 'Subtitle',
-      );
-      const url = String(track.url || track.subtitleUrl || track.subtitle_url || track.fileUrl || track.src || '');
-      return url ? [{ language, code, url }] : [];
+    const token = await getMovieboxToken();
+    const payload = await movieboxRequest(
+      `${MOVIEBOX_API_HOST}/wefeed-h5api-bff/subject/caption?${params}`,
+      token,
+      20_000,
+    );
+    const captions = Array.isArray(payload.data?.captions) ? payload.data.captions : [];
+    return captions.flatMap((caption: any) => {
+      const rawUrl = String(caption.url || '').trim();
+      if (!rawUrl) return [];
+      try {
+        const url = new URL(rawUrl, MOVIEBOX_WEB_ORIGIN);
+        if (url.protocol !== 'https:') return [];
+        const code = String(caption.lan || caption.language || caption.code || '');
+        return [{
+          language: String(caption.lanName || caption.lan || caption.language || 'Subtitle'),
+          code,
+          url: url.toString(),
+        }];
+      } catch {
+        return [];
+      }
     });
   } catch {
     return [];

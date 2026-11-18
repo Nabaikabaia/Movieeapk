@@ -344,7 +344,7 @@ export default function MovieDetails() {
             episode,
             episodeTitle: activeSeason?.episodes.find((item) => item.number === episode)?.title,
           }
-        : { posterUrl });
+        : { posterUrl }, stream.headers);
       setDownloadNotice(isSeries ? 'Current episode added to Downloads.' : 'Movie added to Downloads.');
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'The Movie API could not prepare this download.');
@@ -407,7 +407,7 @@ export default function MovieDetails() {
             season,
             episode: episodeNumber,
             episodeTitle,
-          });
+          }, stream.headers);
           queued += 1;
         }
         setDownloadProgress({ current: Math.min(offset + batch.length, episodeNumbers.length), total: episodeNumbers.length });

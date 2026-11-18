@@ -19,6 +19,7 @@ export type DownloadItem = DownloadMetadata & {
   title: string;
   uri: string;
   sourceUrl: string;
+  requestHeaders?: Record<string, string>;
   localUri?: string;
   bytes: number;
   total: number;
@@ -32,7 +33,7 @@ export type DownloadItem = DownloadMetadata & {
 type Ctx = {
   items: DownloadItem[];
   canStart:()=>Promise<boolean>;
-  start: (title:string,url:string,metadata?:DownloadMetadata) => Promise<void>;
+  start: (title:string,url:string,metadata?:DownloadMetadata,requestHeaders?:Record<string,string>) => Promise<void>;
   updatePlaybackProgress: (id:string, seconds:number, duration:number) => void;
   pause:(id:string)=>Promise<void>;
   resume:(id:string)=>Promise<void>;
@@ -90,7 +91,7 @@ export function DownloadsProvider({children}:{children:React.ReactNode}) {
    useEffect(()=>{blockedAlertShown.current=false;},[preferences.downloadNetwork]);
   useEffect(()=>{ (async()=>{try{const x=await AsyncStorage.getItem(KEY);if(x){const rows:DownloadItem[]=JSON.parse(x);setItems(rows.map(r=>r.state==='downloading'?{...r,state:'paused'}:r));}}catch{} loaded.current=true;})(); },[]);
   useEffect(()=>{if(loaded.current)void AsyncStorage.setItem(KEY,JSON.stringify(items));},[items]);
-  const start=useCallback(async(title:string,url:string,metadata?:DownloadMetadata)=>{
+  const start=useCallback(async(title:string,url:string,metadata?:DownloadMetadata,requestHeaders?:Record<string,string>)=>{
     if(Platform.OS==='web'){Alert.alert('Use an Android device','Downloads are available in the Android app.');return;}
     if(!url){Alert.alert('No download link','This provider did not supply a downloadable video file.');return;}
     if(/\.m3u8(?:$|\?)/i.test(url)){Alert.alert('Live streams cannot be saved as movie files','This provider supplies an HLS playlist, not a direct downloadable video file.');return;}
@@ -98,9 +99,9 @@ export function DownloadsProvider({children}:{children:React.ReactNode}) {
     const id=Date.now().toString()+Math.random().toString(36).slice(2,8);
     const file=(title.replace(/[^a-z0-9]+/gi,'-').slice(0,50)||'Movie')+'-'+id+'.mp4';
     const uri=(FS.documentDirectory||'')+file;
-    const item:DownloadItem={id,title,uri,sourceUrl:url,bytes:0,total:0,state:'downloading',...metadata};
+    const item:DownloadItem={id,title,uri,sourceUrl:url,requestHeaders,bytes:0,total:0,state:'downloading',...metadata};
     setItems(v=>[item,...v]);
-    const task=FS.createDownloadResumable(url,uri,{},p=>replace(id,x=>({...x,state:'downloading',bytes:p.totalBytesWritten,total:p.totalBytesExpectedToWrite>0?p.totalBytesExpectedToWrite:x.total,resumeData:task.savable().resumeData})));
+    const task=FS.createDownloadResumable(url,uri,{headers:requestHeaders},p=>replace(id,x=>({...x,state:'downloading',bytes:p.totalBytesWritten,total:p.totalBytesExpectedToWrite>0?p.totalBytesExpectedToWrite:x.total,resumeData:task.savable().resumeData})));
     tasks.current.set(id,task);
      try{const r=await task.downloadAsync(); if(r?.uri){tasks.current.delete(id); replace(id,x=>({...x,state:'complete',localUri:r.uri,bytes:x.total||x.bytes}));void notifyComplete(title);}}
     catch(e:any){tasks.current.delete(id);if(!String(e?.message||e).toLowerCase().includes('cancel'))replace(id,x=>({...x,state:'error',error:e?.message||'Download failed'}));}
@@ -114,7 +115,7 @@ export function DownloadsProvider({children}:{children:React.ReactNode}) {
       :item));
   },[]);
   const pause=useCallback(async(id:string)=>{const t=tasks.current.get(id);if(!t)return;try{const saved=await t.pauseAsync();tasks.current.delete(id);replace(id,x=>({...x,state:'paused',resumeData:saved?.resumeData}));}catch(e:any){replace(id,x=>({...x,state:'error',error:e?.message||'Pause failed'}));}},[replace]);
-   const resume=useCallback(async(id:string)=>{const item=items.find(x=>x.id===id);if(!item)return;if(Platform.OS==='web')return;if(!(await canDownloadNow()))return;const t=FS.createDownloadResumable(item.sourceUrl,item.uri,{},p=>replace(id,x=>({...x,state:'downloading',bytes:p.totalBytesWritten,total:p.totalBytesExpectedToWrite>0?p.totalBytesExpectedToWrite:x.total,resumeData:t.savable().resumeData})),item.resumeData);tasks.current.set(id,t);replace(id,x=>({...x,state:'downloading',error:undefined}));try{const r=await t.resumeAsync();tasks.current.delete(id);if(r?.uri){replace(id,x=>({...x,state:'complete',localUri:r.uri}));void notifyComplete(item.title);}}catch(e:any){tasks.current.delete(id);replace(id,x=>({...x,state:'error',error:e?.message||'Resume failed'}));}},[canDownloadNow,items,notifyComplete,replace]);
+   const resume=useCallback(async(id:string)=>{const item=items.find(x=>x.id===id);if(!item)return;if(Platform.OS==='web')return;if(!(await canDownloadNow()))return;const t=FS.createDownloadResumable(item.sourceUrl,item.uri,{headers:item.requestHeaders},p=>replace(id,x=>({...x,state:'downloading',bytes:p.totalBytesWritten,total:p.totalBytesExpectedToWrite>0?p.totalBytesExpectedToWrite:x.total,resumeData:t.savable().resumeData})),item.resumeData);tasks.current.set(id,t);replace(id,x=>({...x,state:'downloading',error:undefined}));try{const r=await t.resumeAsync();tasks.current.delete(id);if(r?.uri){replace(id,x=>({...x,state:'complete',localUri:r.uri}));void notifyComplete(item.title);}}catch(e:any){tasks.current.delete(id);replace(id,x=>({...x,state:'error',error:e?.message||'Resume failed'}));}},[canDownloadNow,items,notifyComplete,replace]);
    useEffect(()=>{
      if(Platform.OS==='web'||!preferencesReady||preferences.downloadNetwork==='any')return undefined;
      const enforcePolicy=(network:{type?:Network.NetworkStateType})=>{
